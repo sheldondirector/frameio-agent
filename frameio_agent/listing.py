@@ -59,18 +59,24 @@ def _expand_project_scopes(
 def _normalize_file(account_id: str, raw: dict[str, Any]) -> dict[str, Any]:
     file_id = raw.get("id") or raw.get("file_id") or ""
     project_id = raw.get("project_id") or ""
-    return {
+    out = {
         "file_id": file_id,
         "name": raw.get("name") or "",
         "project_id": project_id,
         "media_type": raw.get("media_type"),
         "file_size": raw.get("file_size") or raw.get("filesize"),
         "duration_seconds": raw.get("duration_seconds") or raw.get("duration"),
-        "comments_count": raw.get("comments_count") or raw.get("comment_count") or 0,
+        # comments_count isn't returned by V4 listing endpoints; left null.
+        # Use `comments <file_id>` to get the actual list.
+        "comments_count": raw.get("comments_count") or raw.get("comment_count"),
         "created_at": raw.get("created_at"),
         "updated_at": raw.get("updated_at"),
-        "frameio_url": _frameio_url(account_id, project_id, file_id) if (project_id and file_id) else None,
+        "frameio_url": raw.get("view_url") or (_frameio_url(account_id, project_id, file_id) if (project_id and file_id) else None),
     }
+    # Preserve version_stack id if we unwrapped one — useful for share creation.
+    if raw.get("version_stack_id"):
+        out["version_stack_id"] = raw["version_stack_id"]
+    return out
 
 
 def _resolve_account_for_project(client: FrameioClient, project_id: str) -> str:

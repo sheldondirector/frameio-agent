@@ -56,18 +56,24 @@ def list_folder_children(
     client: FrameioClient,
     account_id: str,
     folder_id: str,
-    *,
-    page_size: int = 50,
 ) -> Iterator[dict[str, Any]]:
-    """Yield every direct child (folder or file) of a folder, paginated."""
-    yield from client.paginate(
-        f"/accounts/{account_id}/folders/{folder_id}/children",
-        page_size=page_size,
-    )
+    """Yield every direct child (folder or file) of a folder.
+
+    Verified against the live V4 API: this endpoint returns ``{"data": [...]}``
+    and rejects pagination query params (HTTP 422). If the response includes
+    a ``meta.next_cursor`` we follow it; otherwise one call returns everything.
+    """
+    yield from client.paginate(f"/accounts/{account_id}/folders/{folder_id}/children")
 
 
 def get_file(client: FrameioClient, account_id: str, file_id: str) -> dict[str, Any]:
     payload = client.get(f"/accounts/{account_id}/files/{file_id}")
+    return payload.get("data") or payload
+
+
+def get_version_stack(client: FrameioClient, account_id: str, stack_id: str) -> dict[str, Any]:
+    """Fetch a version_stack's detail. Use head_version.id for comments/file calls."""
+    payload = client.get(f"/accounts/{account_id}/version_stacks/{stack_id}")
     return payload.get("data") or payload
 
 
@@ -81,26 +87,10 @@ def list_recent_files(
 ) -> list[dict[str, Any]]:
     """Return the most recently updated files in a project.
 
-    Uses the project search endpoint with sort=-updated_at. If your V4
-    deployment doesn't expose this exact shape, this is the single place
-    to change it.
+    Frame.io V4 has no project-wide list/search endpoint — verified against
+    live API: /accounts/{id}/projects/{id}/search, /files, /assets all 404.
+    The only path is folder traversal from the project's root folder.
     """
-    params: dict[str, Any] = {
-        "sort": "-updated_at",
-        "page_size": limit,
-        "type": "file",
-    }
-    if media_type:
-        params["media_type"] = media_type
-    payload = client.get(
-        f"/accounts/{account_id}/projects/{project_id}/search",
-        params=params,
-        accept_status=(200, 404),  # 404 is the "endpoint missing" signal
-    )
-    items = payload.get("data") or payload.get("results") or []
-    if items:
-        return items[:limit]
-    # Fallback: walk from the project root recursively (capped).
     return _recent_via_traversal(client, account_id, project_id, media_type=media_type, limit=limit)
 
 
@@ -111,15 +101,19 @@ def _recent_via_traversal(
     *,
     media_type: Optional[str],
     limit: int,
-    max_folders: int = 60,
-    max_assets: int = 600,
+    max_folders: int = 200,
+    max_assets: int = 2000,
 ) -> list[dict[str, Any]]:
-    """Conservative fallback when the search endpoint isn't available.
+    """Walk the project's folder tree, collect file assets, sort by recency.
 
-    Walks the project's folder tree, collects file assets, sorts by
-    updated_at desc, and returns the top ``limit``. Caps prevent runaway
-    traversals on big projects — `latest` should not need this on production
-    V4, but the fallback keeps the demo path usable.
+    Frame.io V4 returns children mixed: folders + files + version_stacks.
+    We:
+      * enqueue folders for recursion,
+      * accept files as-is,
+      * unwrap version_stacks to their head_version (one extra call each)
+        so downstream `comments` / `share create` always get a real file_id.
+
+    Caps prevent runaway traversal on very large projects.
     """
     project = get_project(client, account_id, project_id)
     root = project.get("root_folder_id") or project.get("root_asset_id")
@@ -143,12 +137,45 @@ def _recent_via_traversal(
                 if child_id:
                     queue.append(child_id)
                 continue
-            if media_type and child.get("media_type") not in (media_type, None):
+            if kind == "version_stack":
+                stack_id = child.get("id")
+                if not stack_id:
+                    continue
+                try:
+                    stack = get_version_stack(client, account_id, stack_id)
+                except Exception:
+                    continue
+                head = stack.get("head_version") or {}
+                if not head.get("id"):
+                    continue
+                # Take head_version's id/file_size/media_type, keep
+                # version_stack's name (usually identical) + updated_at.
+                merged = {
+                    **head,
+                    "name": child.get("name") or head.get("name"),
+                    "updated_at": child.get("updated_at") or head.get("updated_at"),
+                    "version_stack_id": stack_id,
+                }
+                if _passes_media_filter(merged, media_type):
+                    files.append(merged)
                 continue
-            files.append(child)
+            # kind == "file"
+            if _passes_media_filter(child, media_type):
+                files.append(child)
 
     files.sort(key=lambda f: f.get("updated_at") or "", reverse=True)
     return files[:limit]
+
+
+def _passes_media_filter(child: dict[str, Any], media_type: Optional[str]) -> bool:
+    """Apply media_type filter permissively. V4 uses MIME types like 'video/mp4'."""
+    if not media_type:
+        return True
+    actual = child.get("media_type") or ""
+    if not actual:
+        return True  # be permissive when the field is missing
+    # "video" matches "video/mp4", "video/quicktime", etc.
+    return actual.startswith(f"{media_type}/") or actual == media_type
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -159,15 +186,8 @@ def list_comments(
     client: FrameioClient,
     account_id: str,
     file_id: str,
-    *,
-    page_size: int = 50,
 ) -> list[dict[str, Any]]:
-    return list(
-        client.paginate(
-            f"/accounts/{account_id}/files/{file_id}/comments",
-            page_size=page_size,
-        )
-    )
+    return list(client.paginate(f"/accounts/{account_id}/files/{file_id}/comments"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────

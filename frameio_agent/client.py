@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 from typing import Any, Iterator, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -61,9 +62,22 @@ class FrameioClient:
         }
 
     def _absolute(self, path_or_url: str) -> str:
+        """Resolve a path or URL against the API base.
+
+        Handles three cases:
+          * full URL  -> returned as-is
+          * V4-relative path (e.g. ``/me``)  -> append to api_base
+          * host-absolute path that already includes the api_base path
+            (e.g. ``/v4/accounts/...?after=...`` from a ``links.next`` cursor)
+            -> resolve against the host root to avoid doubling ``/v4/v4/``
+        """
         if path_or_url.startswith(("http://", "https://")):
             return path_or_url
-        return f"{self.cfg.api_base}{path_or_url}"
+        base = urlsplit(self.cfg.api_base)
+        base_path = base.path or ""
+        if base_path and (path_or_url == base_path or path_or_url.startswith(base_path + "/")):
+            return urlunsplit((base.scheme, base.netloc, path_or_url, "", ""))
+        return f"{self.cfg.api_base.rstrip('/')}/{path_or_url.lstrip('/')}"
 
     def request(
         self,
@@ -149,31 +163,41 @@ class FrameioClient:
         *,
         params: Optional[dict[str, Any]] = None,
         items_key: str = "data",
-        page_param: str = "page",
-        page_size_param: str = "page_size",
-        page_size: int = 50,
         max_pages: int = 200,
     ) -> Iterator[dict[str, Any]]:
-        """Yield items from a paginated list endpoint.
+        """Yield items from a paginated V4 list endpoint.
 
-        Frame.io V4 returns a top-level ``data`` array. Pagination is
-        typically ``page`` + ``page_size`` query params; if a future schema
-        change moves to cursors or links, this is the single place to fix it.
+        Frame.io V4 rejects ``page``/``page_size`` query params (HTTP 422).
+        Two pagination shapes have been observed against live V4:
+
+          * ``{"data":[...], "meta": {"next_cursor": "..."}}``
+            (followed with ``?cursor=...``)
+          * ``{"data":[...], "links": {"next": "https://...absolute-url..."}}``
+            (followed with the absolute next URL verbatim)
+
+        We start with no params, then follow whichever cursor shape is
+        present until exhausted.
         """
-        page = 1
-        seen = 0
-        while page <= max_pages:
+        url: Optional[str] = path
+        cursor: Optional[str] = None
+        for _ in range(max_pages):
             q = dict(params or {})
-            q[page_param] = page
-            q[page_size_param] = page_size
-            payload = self.get(path, params=q)
+            if cursor:
+                q["cursor"] = cursor
+            payload = self.get(url, params=q) if url is not None else {}
             items = payload.get(items_key) or payload.get("results") or []
-            if not items:
-                return
             for item in items:
                 yield item
-                seen += 1
-            # Heuristic stop: if we got fewer than page_size items, we're done.
-            if len(items) < page_size:
+            meta = payload.get("meta") or {}
+            links = payload.get("links") or {}
+            next_link = links.get("next")
+            next_cursor = meta.get("next_cursor") or meta.get("next")
+            if next_link:
+                url = next_link
+                cursor = None
+                params = None  # next_link already encodes its own query string
+            elif next_cursor:
+                cursor = next_cursor
+                # url stays the same; cursor is appended to params on next loop
+            else:
                 return
-            page += 1

@@ -49,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     auth_login.add_argument("--port", type=int, default=None, help="Loopback port (default: from FRAMEIO_REDIRECT_URI).")
     auth_login.add_argument("--no-browser", action="store_true", help="Print the authorize URL instead of opening a browser.")
+    auth_login.add_argument(
+        "--manual", action="store_true",
+        help="Skip the loopback server; print the authorize URL and accept a pasted redirect URL or code. Use when Adobe redirects to a URI we can't capture (e.g. https://localhost).",
+    )
 
     auth_status = auth_sub.add_parser("status", help="Show whether auth tokens are present and valid (no secrets printed).")
     _add_json_flag(auth_status)
@@ -149,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "auth":
             if args.auth_command == "login":
                 from .auth import cmd_login
-                return cmd_login(port=args.port, no_browser=args.no_browser)
+                return cmd_login(port=args.port, no_browser=args.no_browser, manual=args.manual)
             if args.auth_command == "status":
                 from .auth import cmd_status
                 return cmd_status(as_json=args.json, emit=_emit)

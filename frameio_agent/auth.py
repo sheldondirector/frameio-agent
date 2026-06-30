@@ -359,7 +359,63 @@ def _interactive_credential_capture(cfg: Config) -> Config:
 # Public entry points: cmd_login / cmd_status
 # ──────────────────────────────────────────────────────────────────────────────
 
-def cmd_login(*, port: Optional[int] = None, no_browser: bool = False) -> int:
+def _is_loopback_capturable(redirect_uri: str) -> bool:
+    """True if our HTTP loopback server can plausibly catch the callback.
+
+    Adobe Web App credentials require HTTPS redirects and reject plain
+    http://localhost:<port>/callback. When the redirect URI is the
+    HTTPS-default ``https://localhost`` (no port, no path) we cannot bind
+    or terminate TLS without admin + a cert, so we force manual paste.
+    """
+    parts = urlsplit(redirect_uri)
+    if parts.scheme != "http":
+        return False
+    if parts.hostname not in ("localhost", "127.0.0.1"):
+        return False
+    return bool(parts.port)
+
+
+def _manual_paste_flow(authorize_url: str, expected_state: str) -> tuple[Optional[str], Optional[str]]:
+    """Print the authorize URL, accept a pasted redirect URL or bare code.
+
+    Returns (code, error_message). On state mismatch or missing code,
+    returns (None, error_message).
+    """
+    print()
+    print("Manual paste mode — your browser will land on a 'site can't be reached' page.")
+    print("That is expected; the URL bar contains the OAuth code we need.")
+    print()
+    print("1. Open this URL in your browser and sign in to Adobe:")
+    print(f"   {authorize_url}")
+    print()
+    print("2. After signing in, copy the ENTIRE redirect URL from the browser's")
+    print("   address bar (it will start with https://localhost/?code=...) and paste below.")
+    print("   You can also paste just the code value if you prefer.")
+    print()
+    try:
+        pasted = input("Paste redirect URL or code: ").strip()
+    except EOFError:
+        return None, "No input received."
+
+    if not pasted:
+        return None, "No input received."
+
+    if pasted.startswith(("http://", "https://")):
+        qs = parse_qs(urlsplit(pasted).query, keep_blank_values=True)
+        code = (qs.get("code") or [None])[0]
+        state = (qs.get("state") or [None])[0]
+        error = (qs.get("error") or [None])[0]
+        if error:
+            return None, f"Adobe returned error: {error}"
+        if state and state != expected_state:
+            return None, "OAuth state mismatch — possible CSRF. Aborting."
+        if not code:
+            return None, "Pasted URL did not contain a 'code' parameter."
+        return code, None
+    return pasted, None  # bare code; state not verifiable
+
+
+def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: bool = False) -> int:
     cfg = load_config()
 
     if not cfg.client_id or not cfg.client_secret:
@@ -377,6 +433,17 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False) -> int:
         redirect_uri = parts._replace(netloc=f"127.0.0.1:{port}").geturl()
     expected_path = urlsplit(redirect_uri).path or "/callback"
 
+    # Auto-switch to manual mode when the redirect URI cannot host an
+    # http loopback (e.g. Adobe's required https://localhost).
+    if not manual and not _is_loopback_capturable(redirect_uri):
+        manual = True
+        print()
+        print(
+            "Note: FRAMEIO_REDIRECT_URI is "
+            f"{redirect_uri!r} — switching to manual paste mode "
+            "since we can't host an HTTP loopback at that address."
+        )
+
     code_verifier, code_challenge = _pkce_pair()
     state = secrets.token_urlsafe(24)
     authorize_url = IMS_AUTHORIZE_URL + "?" + urllib.parse.urlencode(
@@ -391,37 +458,49 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False) -> int:
         }
     )
 
-    print()
-    print(f"Starting local callback server on http://127.0.0.1:{actual_port}{expected_path}")
-    print("Opening browser to Adobe to sign in...")
-    print("(If the browser does not open, copy this URL and paste it into a browser:)")
-    print(f"  {authorize_url}")
-    print()
+    if manual:
+        if not no_browser:
+            try:
+                webbrowser.open(authorize_url)
+            except Exception:
+                pass
+        code, err = _manual_paste_flow(authorize_url, expected_state=state)
+        if err or not code:
+            print(f"Error: {err or 'no code received'}", file=sys.stderr)
+            return 2
+    else:
+        print()
+        print(f"Starting local callback server on http://127.0.0.1:{actual_port}{expected_path}")
+        print("Opening browser to Adobe to sign in...")
+        print("(If the browser does not open, copy this URL and paste it into a browser:)")
+        print(f"  {authorize_url}")
+        print()
 
-    if not no_browser:
+        if not no_browser:
+            try:
+                webbrowser.open(authorize_url)
+            except Exception:
+                pass
+
         try:
-            webbrowser.open(authorize_url)
-        except Exception:
-            pass  # fall through to manual
+            result = _wait_for_callback(actual_port, expected_path, CALLBACK_TIMEOUT_SECONDS)
+        except AuthError as e:
+            print(f"Error: {e.render()}", file=sys.stderr)
+            return 2
 
-    try:
-        result = _wait_for_callback(actual_port, expected_path, CALLBACK_TIMEOUT_SECONDS)
-    except AuthError as e:
-        print(f"Error: {e.render()}", file=sys.stderr)
-        return 2
-
-    if result.error:
-        print(
-            f"Error from Adobe: {result.error} — {result.error_description or ''}",
-            file=sys.stderr,
-        )
-        return 2
-    if result.state != state:
-        print("Error: OAuth state mismatch — possible CSRF. Aborting.", file=sys.stderr)
-        return 2
-    if not result.code:
-        print("Error: no authorization code received.", file=sys.stderr)
-        return 2
+        if result.error:
+            print(
+                f"Error from Adobe: {result.error} — {result.error_description or ''}",
+                file=sys.stderr,
+            )
+            return 2
+        if result.state != state:
+            print("Error: OAuth state mismatch — possible CSRF. Aborting.", file=sys.stderr)
+            return 2
+        if not result.code:
+            print("Error: no authorization code received.", file=sys.stderr)
+            return 2
+        code = result.code
 
     # Exchange code for tokens.
     try:
@@ -429,7 +508,7 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False) -> int:
             IMS_TOKEN_URL,
             data={
                 "grant_type": "authorization_code",
-                "code": result.code,
+                "code": code,
                 "client_id": cfg.client_id,
                 "client_secret": cfg.client_secret,
                 "code_verifier": code_verifier,
