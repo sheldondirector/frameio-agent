@@ -73,13 +73,25 @@ def build_parser() -> argparse.ArgumentParser:
     latest.add_argument("--limit", type=int, default=5, help="Max results (default: 5).")
     _add_json_flag(latest)
 
-    # search
-    search = sub.add_parser("search", help="Capped name/path search across a project.")
-    search.add_argument("query", help="Substring to match against asset names.")
-    search.add_argument("--project", required=True, help="Project ID.")
-    search.add_argument("--limit", type=int, default=20, help="Max results (default: 20).")
-    search.add_argument("--max-folders", type=int, default=200, help="Folder traversal cap (default: 200).")
-    search.add_argument("--max-assets", type=int, default=1000, help="Asset traversal cap (default: 1000).")
+    # search (account-wide, uses POST /search)
+    search = sub.add_parser("search", help="Account-wide search across all your projects, folders, and files.")
+    search.add_argument("query", help="Search query. Use --nlp for natural-language matching.")
+    search.add_argument(
+        "--engine",
+        choices=("lexical", "nlp"),
+        default="lexical",
+        help="Search engine: 'lexical' (default, keyword match) or 'nlp' (natural language).",
+    )
+    search.add_argument("--nlp", dest="engine", action="store_const", const="nlp",
+                        help="Shortcut for --engine nlp.")
+    search.add_argument("--no-files", dest="files", action="store_false", default=True,
+                        help="Exclude files and version-stacks.")
+    search.add_argument("--no-folders", dest="folders", action="store_false", default=True,
+                        help="Exclude folders.")
+    search.add_argument("--no-projects", dest="projects", action="store_false", default=True,
+                        help="Exclude projects.")
+    search.add_argument("--account", help="Account ID. Defaults to FRAMEIO_ACCOUNT_ID or the first visible account.")
+    search.add_argument("--limit", type=int, default=25, help="Max results (default: 25).")
     _add_json_flag(search)
 
     # comments
@@ -176,10 +188,12 @@ def main(argv: list[str] | None = None) -> int:
             from .search import cmd_search
             return cmd_search(
                 query=args.query,
-                project=args.project,
+                engine=args.engine,
+                files=args.files,
+                folders=args.folders,
+                projects=args.projects,
+                account=args.account,
                 limit=args.limit,
-                max_folders=args.max_folders,
-                max_assets=args.max_assets,
                 as_json=args.json,
                 emit=_emit,
             )

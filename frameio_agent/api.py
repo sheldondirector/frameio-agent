@@ -194,6 +194,46 @@ def list_comments(
 # Share creation — the ONE mutation in v1 (see PRD §11.8)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Account-wide search (V4 SearchParams)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def search_account(
+    client: FrameioClient,
+    account_id: str,
+    *,
+    query: str,
+    engine: str = "lexical",
+    files: bool = True,
+    folders: bool = True,
+    projects: bool = True,
+    limit: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """POST /accounts/{id}/search — single-call account-wide search.
+
+    Engines: ``lexical`` (keyword match) or ``nlp`` (natural-language, e.g.
+    "red car driving on highway"). Filters control which entity types are
+    returned. Caller may cap with ``limit`` (client-side slice after fetch).
+    """
+    body = {
+        "query": query,
+        "engine": engine,
+        "filters": {
+            "files_and_version_stacks": files,
+            "folders": folders,
+            "projects": projects,
+        },
+    }
+    payload = client.request(
+        "POST",
+        f"/accounts/{account_id}/search",
+        json_body=body,
+        accept_status=(200,),
+    )
+    data = payload.get("data") or []
+    return data if limit is None else data[:limit]
+
+
 def create_share(
     client: FrameioClient,
     account_id: str,

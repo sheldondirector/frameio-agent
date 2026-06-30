@@ -1,8 +1,30 @@
-"""Capped name/path search across a project's folder tree.
+"""Account-wide search via Frame.io V4's POST /accounts/{id}/search.
 
-Recency-first ``latest`` is the headline command. This is the fallback for
-finding a *named* asset when the user knows what they're looking for. Caps
-prevent runaway traversal on big projects.
+Replaces the v0.3 folder-traversal implementation. The V4 search endpoint
+hits all of your projects, folders, and files/version-stacks in one call
+and supports two engines:
+
+  * ``lexical`` — keyword match (default; fast, predictable)
+  * ``nlp``     — natural-language query (e.g. "red car driving on highway")
+
+Output shape per :data:`AGENTS.md`:
+    {
+      "query": "...",
+      "engine": "lexical",
+      "total_count": 42,
+      "results": [
+        {
+          "type": "file" | "version_stack" | "folder" | "project",
+          "id": "...",
+          "name": "...",
+          "project_id": "...",
+          "view_url": "https://next.frame.io/...",
+          "created_at": "...",
+          "updated_at": "...",
+          "matches": [...]   # match-term highlight info from V4
+        }
+      ]
+    }
 """
 from __future__ import annotations
 
@@ -12,100 +34,90 @@ from typing import Any, Callable, Optional
 from . import api
 from .client import FrameioClient
 from .config import load_config
-from .errors import FrameioAgentError, TraversalCapError
-from .listing import _normalize_file, _resolve_account_for_project
+from .errors import FrameioAgentError
 
 
-def _walk(
-    client: FrameioClient,
-    account_id: str,
-    root_folder: str,
-    *,
-    max_folders: int,
-    max_assets: int,
-) -> list[tuple[str, dict[str, Any]]]:
-    """Yield (folder_path, asset) tuples up to the caps."""
-    out: list[tuple[str, dict[str, Any]]] = []
-    queue: list[tuple[str, str]] = [("", root_folder)]
-    seen_folders = 0
-    seen_assets = 0
-    while queue:
-        path, folder_id = queue.pop(0)
-        seen_folders += 1
-        if seen_folders > max_folders:
-            raise TraversalCapError(
-                "Traversal cap reached.",
-                remediation="Try `latest` instead, or narrow with --max-folders / --folder.",
-            )
-        for child in api.list_folder_children(client, account_id, folder_id):
-            seen_assets += 1
-            if seen_assets > max_assets:
-                raise TraversalCapError(
-                    "Traversal cap reached.",
-                    remediation="Try `latest` instead, or narrow with --max-assets / --folder.",
-                )
-            kind = child.get("type") or child.get("kind") or ""
-            name = child.get("name") or ""
-            if kind == "folder":
-                child_id = child.get("id") or child.get("folder_id")
-                if child_id:
-                    queue.append((f"{path}/{name}" if path else name, child_id))
-                continue
-            out.append((path, child))
-    return out
+def _normalize_search_result(raw: dict[str, Any]) -> dict[str, Any]:
+    """Flatten the V4 search result envelope ({result:{...}, matches:[...]}) ."""
+    inner = raw.get("result") or {}
+    return {
+        "type": inner.get("type"),
+        "id": inner.get("id"),
+        "name": inner.get("name"),
+        "project_id": inner.get("project_id"),
+        "parent_id": inner.get("parent_id"),
+        "created_at": inner.get("created_at"),
+        "updated_at": inner.get("updated_at"),
+        "view_url": inner.get("view_url"),
+        "matches": raw.get("matches") or [],
+    }
 
 
 def cmd_search(
     *,
     query: str,
-    project: str,
+    engine: str,
+    files: bool,
+    folders: bool,
+    projects: bool,
     limit: int,
-    max_folders: int,
-    max_assets: int,
+    account: Optional[str],
     as_json: bool,
     emit: Callable[[Any, bool], None],
 ) -> int:
+    if not query.strip():
+        print("Error: query is required.", file=sys.stderr)
+        return 2
+    if engine not in ("lexical", "nlp"):
+        print("Error: --engine must be 'lexical' or 'nlp'.", file=sys.stderr)
+        return 2
+    if not (files or folders or projects):
+        print("Error: at least one of files/folders/projects must be enabled.", file=sys.stderr)
+        return 2
+
     cfg = load_config()
-    q = query.lower()
     try:
         with FrameioClient(cfg) as client:
-            account_id = _resolve_account_for_project(client, project)
-            project_meta = api.get_project(client, account_id, project)
-            root = project_meta.get("root_folder_id") or project_meta.get("root_asset_id")
-            if not root:
-                raise FrameioAgentError(
-                    f"Project {project} has no root folder.",
-                    remediation="Verify the project ID with `projects --json`.",
-                )
-            walked = _walk(
-                client, account_id, root,
-                max_folders=max_folders, max_assets=max_assets,
+            account_id = account or cfg.default_account_id
+            if not account_id:
+                accounts = api.list_accounts(client)
+                if not accounts:
+                    raise FrameioAgentError(
+                        "No Frame.io accounts visible.",
+                        remediation="Run: frameio-agent verify",
+                    )
+                account_id = accounts[0].get("id") or accounts[0].get("account_id")
+            raw_results = api.search_account(
+                client, account_id,
+                query=query, engine=engine,
+                files=files, folders=folders, projects=projects,
+                limit=limit,
             )
     except FrameioAgentError as e:
         print(f"Error: {e.render()}", file=sys.stderr)
         return 1
 
-    matched: list[dict[str, Any]] = []
-    for folder_path, child in walked:
-        name = (child.get("name") or "").lower()
-        if q in name or q in folder_path.lower():
-            normalized = _normalize_file(account_id, child)
-            normalized["folder_path"] = folder_path
-            normalized["project_name"] = project_meta.get("name") or ""
-            matched.append(normalized)
-            if len(matched) >= limit:
-                break
-
-    payload = {"query": query, "project_id": project, "results": matched}
+    results = [_normalize_search_result(r) for r in raw_results]
+    payload = {
+        "query": query,
+        "engine": engine,
+        "result_count": len(results),
+        "results": results,
+    }
     if as_json:
         emit(payload, True)
     else:
-        if not matched:
-            print(f"No matches for '{query}' in project {project}.")
-            print("  > Try `latest` or list projects first.")
+        if not results:
+            print(f"No matches for '{query}' (engine={engine}).")
+            print("  > Try a different engine (--nlp or --lexical), or broaden the query.")
             return 0
-        print(f"Matches for '{query}' in project {project}:")
-        for r in matched:
-            print(f"  - {r['name']}  ({r['folder_path']})")
-            print(f"    file_id: {r['file_id']}  comments: {r['comments_count']}")
+        print(f"Matches for '{query}' (engine={engine}, {len(results)} shown):")
+        for r in results:
+            kind = r.get("type") or "?"
+            name = r.get("name") or "(no name)"
+            print(f"  [{kind:<14}] {name}")
+            if r.get("id"):
+                print(f"                  id: {r['id']}")
+            if r.get("view_url"):
+                print(f"                  url: {r['view_url']}")
     return 0
