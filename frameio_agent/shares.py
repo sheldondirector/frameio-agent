@@ -63,7 +63,7 @@ def build_payload(
     return {"data": inner}
 
 
-def _render_confirmation(payload: dict[str, Any]) -> str:
+def _render_confirmation(payload: dict[str, Any], *, reviewers: Optional[list[str]] = None, message: Optional[str] = None) -> str:
     d = payload["data"]
     lines = [
         "About to create a Frame.io share:",
@@ -76,6 +76,13 @@ def _render_confirmation(payload: dict[str, Any]) -> str:
     lines.append(f"  Download:     {'allowed' if d['downloading_enabled'] else 'not allowed'}")
     lines.append(f"  Expires:      {d.get('expiration') or 'never'}")
     lines.append(f"  Password:     {'set' if d.get('passphrase') else 'none'}")
+    if reviewers:
+        lines.append(f"  Reviewers:    {len(reviewers)} email recipient(s)")
+        for email in reviewers:
+            lines.append(f"                  - {email}")
+        if message:
+            short_msg = (message[:60] + "...") if len(message) > 60 else message
+            lines.append(f"  Message:      {short_msg!r}")
     return "\n".join(lines)
 
 
@@ -106,6 +113,18 @@ def _normalize_share_response(raw: dict[str, Any], request_body: dict[str, Any])
     }
 
 
+def _parse_reviewer_list(raw: Optional[str]) -> list[str]:
+    """Comma-separated email addresses → cleaned list."""
+    if not raw:
+        return []
+    out: list[str] = []
+    for piece in raw.split(","):
+        email = piece.strip()
+        if email:
+            out.append(email)
+    return out
+
+
 def cmd_share_create(
     *,
     file_ids: list[str],
@@ -119,12 +138,19 @@ def cmd_share_create(
     as_json: bool,
     emit: Callable[[Any, bool], None],
     stdin: Any = None,
+    reviewers: Optional[str] = None,
+    message: Optional[str] = None,
 ) -> int:
     if not file_ids:
         print("Error: at least one file_id is required.", file=sys.stderr)
         return 2
     if not name.strip():
         print("Error: --name is required.", file=sys.stderr)
+        return 2
+
+    reviewer_emails = _parse_reviewer_list(reviewers)
+    if len(reviewer_emails) > 10:
+        print("Error: max 10 reviewer emails per share (V4 limit).", file=sys.stderr)
         return 2
 
     payload = build_payload(
@@ -136,7 +162,7 @@ def cmd_share_create(
         public=public,
     )
 
-    print(_render_confirmation(payload))
+    print(_render_confirmation(payload, reviewers=reviewer_emails or None, message=message))
 
     if not yes:
         in_stream = stdin if stdin is not None else sys.stdin
@@ -198,6 +224,24 @@ def cmd_share_create(
         return 1
 
     normalized = _normalize_share_response(raw, payload)
+
+    # Optionally add email reviewers — second mutation, separately surfaced.
+    reviewer_status: Optional[str] = None
+    if reviewer_emails and normalized.get("share_id"):
+        try:
+            with FrameioClient(cfg) as client:
+                account_id = _resolve_account_for_file(client, file_ids[0])
+                api.add_reviewers_to_share(
+                    client, account_id, normalized["share_id"],
+                    emails=reviewer_emails, message=message,
+                )
+            reviewer_status = "added"
+        except FrameioAgentError as e:
+            reviewer_status = f"failed: {e.render()}"
+
+    normalized["reviewers_added"] = reviewer_emails if reviewer_status == "added" else []
+    normalized["reviewer_status"] = reviewer_status
+
     if as_json:
         emit(normalized, True)
     else:
@@ -206,4 +250,8 @@ def cmd_share_create(
         print(f"  URL:    {normalized['url']}")
         print(f"  ID:     {normalized['share_id']}")
         print(f"  Assets: {normalized['asset_count']}")
+        if reviewer_status == "added":
+            print(f"  Reviewers: notified {len(reviewer_emails)} email(s)")
+        elif reviewer_status and reviewer_status.startswith("failed"):
+            print(f"  Reviewers: {reviewer_status}", file=sys.stderr)
     return 0

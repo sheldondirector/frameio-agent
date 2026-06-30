@@ -203,6 +203,44 @@ class TestCmdShareCreateGuards:
         assert rc == 1
 
 
+class TestParseReviewerList:
+    def test_empty(self) -> None:
+        assert shares._parse_reviewer_list(None) == []
+        assert shares._parse_reviewer_list("") == []
+
+    def test_single(self) -> None:
+        assert shares._parse_reviewer_list("a@x.com") == ["a@x.com"]
+
+    def test_multi_with_whitespace(self) -> None:
+        out = shares._parse_reviewer_list("a@x.com, b@y.com ,c@z.com")
+        assert out == ["a@x.com", "b@y.com", "c@z.com"]
+
+    def test_drops_blanks(self) -> None:
+        assert shares._parse_reviewer_list("a@x.com,,b@y.com,") == ["a@x.com", "b@y.com"]
+
+
+class TestRenderConfirmationWithReviewers:
+    def test_reviewers_appear(self) -> None:
+        payload = shares.build_payload(
+            name="x", asset_ids=["f1"], allow_download=False,
+            expires_at=None, password=None, public=True,
+        )
+        text = shares._render_confirmation(payload, reviewers=["a@x.com", "b@y.com"], message="LGTM?")
+        assert "Reviewers:    2 email recipient(s)" in text
+        assert "a@x.com" in text
+        assert "b@y.com" in text
+        assert "LGTM?" in text
+
+    def test_reviewers_truncation(self) -> None:
+        payload = shares.build_payload(
+            name="x", asset_ids=["f1"], allow_download=False,
+            expires_at=None, password=None, public=True,
+        )
+        long_msg = "a" * 200
+        text = shares._render_confirmation(payload, reviewers=["a@x.com"], message=long_msg)
+        assert "..." in text  # message gets truncated past 60 chars
+
+
 class TestPromptConfirm:
     @pytest.mark.parametrize("answer,expected", [
         ("y", True), ("Y", True), ("yes", True), ("YES", True),

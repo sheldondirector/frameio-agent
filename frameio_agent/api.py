@@ -345,3 +345,29 @@ def create_share(
         accept_status=(200, 201),
     )
     return payload.get("data") or payload
+
+
+def add_reviewers_to_share(
+    client: FrameioClient,
+    account_id: str,
+    share_id: str,
+    *,
+    emails: list[str],
+    message: Optional[str] = None,
+) -> dict[str, Any]:
+    """POST /shares/{id}/reviewers. Adds email recipients to a share.
+
+    Frame.io sends them a notification email with a link. Optional message
+    is included in the notification body. Per V4 OpenAPI: max 10 emails
+    per call, must be valid email addresses.
+    """
+    body: dict[str, Any] = {"data": {"reviewers": {"emails": list(emails)}}}
+    if message:
+        body["data"]["message"] = message
+    payload = client.request(
+        "POST",
+        f"/accounts/{account_id}/shares/{share_id}/reviewers",
+        json_body=body,
+        accept_status=(200, 201, 204),
+    )
+    return payload.get("data") or payload

@@ -170,6 +170,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only signed-in Frame.io users can view.",
     )
     share_create.add_argument(
+        "--reviewers", default=None,
+        help="Comma-separated email addresses to notify (max 10). They get a Frame.io invite to view this share.",
+    )
+    share_create.add_argument(
+        "--message", default=None,
+        help="Optional message included in the reviewer notification email.",
+    )
+    share_create.add_argument(
         "--yes", action="store_true",
         help="Skip the y/N confirmation. Only use when the user has explicitly authorized this share.",
     )
@@ -279,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
                     yes=args.yes,
                     as_json=args.json,
                     emit=_emit,
+                    reviewers=args.reviewers,
+                    message=args.message,
                 )
             parser.parse_args(["share", "--help"])
             return 2
