@@ -1,8 +1,12 @@
 # Frame.io Agent Starter
 
-**Give your coding agent safe, read-only access to your Frame.io projects.**
+*by [VAXA Studio](https://vaxa.studio)*
 
-Connect Frame.io to Claude Code, Cursor, Codex, Gemini CLI, or any agent that can run local commands. Your agent can list projects, find your latest cut, and summarize review comments — and it can't touch your edit.
+> **47 director notes, summarized with timecodes, before you open Frame.io.**
+
+Your coding agent can read every comment, find your latest cut, and send the next one for review — and it can't touch your edit, delete a file, or change a permission.
+
+10-minute setup. Works with **Claude Code**, **Cursor**, **OpenAI Codex CLI**, **Gemini CLI**, or any agent that runs local commands. MCP optional.
 
 > *Unofficial community tool. Not affiliated with, endorsed by, or supported by Adobe or Frame.io. "Frame.io" is a trademark of Adobe.*
 
@@ -78,5 +82,7 @@ If your agent supports MCP, run `frameio-agent mcp` to expose the same operation
 MIT. See `LICENSE`.
 
 ---
+
+Built by **[VAXA Studio](https://vaxa.studio)** — we make tools for creative teams using coding agents.
 
 *Unofficial community tool. Not affiliated with, endorsed by, or supported by Adobe or Frame.io.*
