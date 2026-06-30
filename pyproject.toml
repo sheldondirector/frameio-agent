@@ -3,9 +3,9 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "frameio-agent-starter"
-version = "0.2.0"
-description = "Give your coding agent safe, read-only access to your Frame.io projects."
+name = "frameio-agent"
+version = "0.3.0"
+description = "Run Frame.io from your coding agent. Find clips, summarize notes, pull YouTube references, send review links."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -29,6 +29,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Image composition for `contact-sheet`. Add when you need that command.
+images = [
+  "Pillow>=10.0",
+]
+
+# YouTube/X ingestion for `refs add <youtube-url>`. yt-dlp is a moving
+# target; pin a known-good version and bump deliberately.
+youtube = [
+  "yt-dlp>=2025.1.0",
+]
+
 dev = [
   "pytest>=8.0",
 ]
@@ -40,8 +51,8 @@ mcp = [
 frameio-agent = "frameio_agent.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/sheldondirector/frameio-agent-starter"
-Issues = "https://github.com/sheldondirector/frameio-agent-starter/issues"
+Homepage = "https://github.com/sheldondirector/frameio-agent"
+Issues = "https://github.com/sheldondirector/frameio-agent/issues"
 
 [tool.setuptools.packages.find]
 include = ["frameio_agent*"]

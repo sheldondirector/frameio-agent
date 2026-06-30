@@ -1,12 +1,12 @@
-# Frame.io Agent Starter
+# Frame.io Agent
 
 *by [VAXA Studio](https://vaxa.studio)*
 
-> **47 director notes, summarized with timecodes, before you open Frame.io.**
+> **Run Frame.io from your coding agent.**
 
-Your coding agent can read every comment, find your latest cut, and send the next one for review — and it can't touch your edit, delete a file, or change a permission.
+Your agent can find your latest cut, summarize the director's notes with timecodes, pull a YouTube reference straight into a project folder, build a contact sheet from your last shoot, and send a curated review link to a client — all without opening Frame.io.
 
-10-minute setup. Works with **Claude Code**, **Cursor**, **OpenAI Codex CLI**, **Gemini CLI**, or any agent that runs local commands. MCP optional.
+10-minute setup. Works with **Claude Code**, **Cursor**, **OpenAI Codex CLI**, **Gemini CLI**, or any agent that runs local commands. MCP optional. Read-only by default; every mutation (upload, share, comment) is confirmation-gated.
 
 > *Unofficial community tool. Not affiliated with, endorsed by, or supported by Adobe or Frame.io. "Frame.io" is a trademark of Adobe.*
 
@@ -15,8 +15,8 @@ Your coding agent can read every comment, find your latest cut, and send the nex
 ## Quick start (with an agent)
 
 ```bash
-git clone https://github.com/sheldondirector/frameio-agent-starter
-cd frameio-agent-starter
+git clone https://github.com/sheldondirector/frameio-agent
+cd frameio-agent
 ```
 
 Then paste this to your coding agent:
@@ -48,18 +48,26 @@ python -m frameio_agent.cli comments <file_id> --json
 
 ## What it does
 
-- **`auth login`** — guided Adobe IMS OAuth wizard. If you don't have credentials yet, it prints a numbered walkthrough for the Adobe Developer Console. Captures the OAuth `code` automatically via a local loopback server (PKCE). You never paste anything.
+**Read (no confirmation needed):**
+- **`auth login`** — guided Adobe IMS OAuth wizard with clipboard auto-detect. First time only.
 - **`auth status` / `verify`** — confirms the connection without printing tokens.
-- **`projects --json`** — lists accounts → workspaces → projects you can see.
-- **`latest --project <id>`** — newest-updated video assets in a project, with comment counts. Recency-first; no full traversal.
-- **`search "<query>" --project <id>`** — capped name search for when you need a specific asset.
-- **`comments <file_id> --json`** — review notes normalized with both human `timecode` and numeric `timestamp_seconds`, plus author and thread info.
-- **`brief --project <id>`** — one-paragraph "what's going on in this project."
-- **`share create <file_id> [<file_id>...] --name "..."`** — the one mutation in v1. Bundles assets into a Frame.io review share and returns the URL. Prints a confirmation summary and waits for `y/N` before sending; pass `--yes` to skip. Default visibility is `--public` (anyone with the URL); use `--restricted` for signed-in users only. Passwords are never echoed.
+- **`projects --json`** — lists accounts / workspaces / projects.
+- **`latest --project <id>`** — newest-updated video assets, recency-first.
+- **`search "<query>"`** — account-wide search across all your projects and folders.
+- **`comments <file_id> --json`** — normalized review notes (timecode + timestamp_seconds + author + thread).
+- **`brief --project <id>`** — one-paragraph project status.
+
+**Write (every one is confirmation-gated):**
+- **`share create <file_id> [<file_id>...] --name "..."`** — bundle assets into a Frame.io review share. Multi-asset, optional `--reviewers email@a.com,email@b.com`. Default visibility public; `--restricted` for signed-in only. Prompts y/N before sending; `--yes` to skip.
+- **`refs add <url-or-path> --folder <folder_id>`** — pull a YouTube/X URL via yt-dlp, or upload a local file, or trigger Frame.io's remote_upload for direct URLs Frame.io can fetch. One-stop reference ingestion.
+- **`contact-sheet --project <id> --out sheet.png`** — composite thumbnails from a project or folder into a single image grid.
+
+**Read-only by default.** Mutations only fire after explicit y/N confirmation (or `--yes` when the user has authorized the action in the current conversation).
 
 ## Security
 
-- **Read by default, one explicit mutation.** v1 cannot upload, delete, rename, move, or change permissions. The only write operation is `share create`, which prints a confirmation summary and requires `y/N` (or an explicit `--yes`) before sending. See [PRD §5, §8, §11.8](PRD.md) for the full scope.
+- **Read-only by default; every mutation is opt-in and confirmation-gated.** Share creation, reference uploads, comment posts — all require y/N (or an explicit `--yes` the user authorized). No silent writes ever.
+- **Delete / rename / move / permission-change are still NOT in scope.** Even the agent can't accidentally trash your project hierarchy. Those endpoints exist in V4; the CLI just doesn't call them.
 - **Secrets stay local.** `.env` and `~/.frameio-agent/tokens.json` are git-ignored. The CLI redacts token-like values from any output. Share passwords are never echoed.
 - **Bring your own credentials.** The wizard helps you create an Adobe Developer Console OAuth Web App; nothing is ever sent to the maintainers.
 

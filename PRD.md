@@ -1,10 +1,17 @@
-# Frame.io Agent Starter — PRD
+# Frame.io Agent — PRD
 
-**Status:** Draft v0.3
-**Primary audience:** Newbie agent users who already use Frame.io and have a frontier coding agent (Claude Code, OpenAI Codex CLI, Cursor, Gemini CLI, or similar).
-**Core thesis:** The lowest-barrier product is not "configure an MCP server." It is a tiny, self-contained repo that any coding agent can read, install, authenticate, verify, and use through a simple CLI with JSON output. MCP is optional after the CLI works.
+**Status:** Draft v0.4 (founder-tool pivot)
+**Primary audience:** **Founders, producers, and creative leads** who run reviews on Frame.io and have a frontier coding agent (Claude Code, OpenAI Codex CLI, Cursor, Gemini CLI, or similar) open while they work. Secondary: agent-builder / dev-rel folks who want a reference example of making a SaaS API agent-readable.
+**Core thesis:** A coding agent that lives next to your editor should be able to **run Frame.io for you** — find clips, summarize director's notes, pull a YouTube reference straight into a project, build a contact sheet, send a curated review link — without you ever opening the app. CLI-first, JSON everywhere, MCP optional. Mutations are real but always confirmation-gated.
 
-**Scope guardrail (read this first):** This tool is **Frame.io and nothing else**. No video editing, no media processing, no cataloging, no external services. Read-only access to Frame.io projects, assets, and comments — **plus exactly one mutation: creating review shares** (a `share create` command, gated by an interactive confirmation by default). Upload, delete, rename, move, and permission changes remain hard-no. If a feature isn't "talk to Frame.io and return data, or create a single review share with explicit confirmation," it does not belong in this repo.
+**Scope guardrail (read this first):** This tool covers the **founder/producer workflow on Frame.io**, plus a few adjacent capabilities that exist purely to feed Frame.io (yt-dlp ingestion → upload, image composition for contact sheets). It does NOT:
+- delete, rename, move, or change permissions on Frame.io assets (those endpoints exist in V4; the CLI just doesn't call them)
+- replace Frame.io Transfer for bulk asset migration
+- become a general-purpose video editor, cataloger, or transcoder
+
+Every mutation (share create, file upload, comment post) requires an interactive y/N confirmation by default. `--yes` bypasses but agents must only set it when the user has explicitly authorized the action in the current conversation.
+
+**v0.4 deltas from v0.3 (the read-only "starter" version):** the product expanded from "read-only + share create" to the founder use case. Added: account-wide search via POST /search, yt-dlp + Frame.io upload (`refs add`), contact-sheet generation, share-create reviewers. Read-only is still the *default mode*; it's no longer the *only mode*. Repo renamed from `frameio-agent-starter` to `frameio-agent`.
 
 ---
 
