@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "frameio-agent-starter"
+version = "0.1.0"
+description = "Give your coding agent safe, read-only access to your Frame.io projects."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Frame.io Agent Starter contributors" }]
+keywords = ["frameio", "frame.io", "adobe", "oauth", "cli", "agent", "mcp"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Video",
+]
+dependencies = [
+  "httpx>=0.27,<1.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+mcp = [
+  "mcp>=1.0",
+]
+
+[project.scripts]
+frameio-agent = "frameio_agent.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sheldonschwartz/frameio-agent-starter"
+Issues = "https://github.com/sheldonschwartz/frameio-agent-starter/issues"
+
+[tool.setuptools.packages.find]
+include = ["frameio_agent*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
