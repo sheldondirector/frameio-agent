@@ -294,36 +294,23 @@ def _wait_for_callback(port: int, expected_path: str, timeout: float) -> _Callba
 # ──────────────────────────────────────────────────────────────────────────────
 
 WALKTHROUGH_TEMPLATE = """\
-Frame.io uses Adobe IMS OAuth. You need an Adobe Developer Console OAuth Web App
-credential. Follow these steps (one-time setup, ~5 minutes):
+One-time Adobe setup (~3 minutes). You need an OAuth Web App credential from
+the Adobe Developer Console:
 
-  1. Open the Adobe Developer Console:
-       https://developer.adobe.com/console/projects
+  1. Open https://developer.adobe.com/console/projects and create a project
+     (or open one you already use).
 
-  2. Click "Create new project" (or open an existing project you want to use).
+  2. Add the Frame.io API: "+ Add to Project" -> "API" -> search "Frame.io"
+     -> select "Frame.io API" -> Next.
 
-  3. In the project, click "+ Add to Project" -> "API".
+  3. Pick credential type "OAuth Web App". Set the redirect URI to:
+         {redirect_uri}
 
-  4. Search for "Frame.io" -> select "Frame.io API" -> click "Next".
+  4. Open the new "OAuth Web App" card in the sidebar and copy the
+     Client ID + Client Secret. Paste them at the prompts below.
 
-  5. Choose credential type: "OAuth Web App".
-       NOT "OAuth Server-to-Server" and NOT "OAuth Single Page App".
-
-  6. Configure the redirect URI:
-       Default Redirect URI:  {redirect_uri}
-       Redirect URI Pattern:  {redirect_uri}
-
-  7. Select all available Frame.io scopes (read-only is enforced in this CLI,
-     not in OAuth scopes).
-
-  8. Save. In the left sidebar under your workspace, click "OAuth Web App"
-     to reveal:
-         - Client ID
-         - Client Secret  (click "Retrieve client secret")
-
-When you have those two values, paste them at the prompts below. They will be
-written to your local .env file (which is gitignored). No values are echoed
-back, logged, or sent anywhere except Adobe's token endpoint.
+The values go in a local .env file (gitignored). Nothing is logged or
+sent anywhere except Adobe's token endpoint.
 """
 
 
@@ -375,44 +362,105 @@ def _is_loopback_capturable(redirect_uri: str) -> bool:
     return bool(parts.port)
 
 
-def _manual_paste_flow(authorize_url: str, expected_state: str) -> tuple[Optional[str], Optional[str]]:
-    """Print the authorize URL, accept a pasted redirect URL or bare code.
-
-    Returns (code, error_message). On state mismatch or missing code,
-    returns (None, error_message).
-    """
-    print()
-    print("Manual paste mode — your browser will land on a 'site can't be reached' page.")
-    print("That is expected; the URL bar contains the OAuth code we need.")
-    print()
-    print("1. Open this URL in your browser and sign in to Adobe:")
-    print(f"   {authorize_url}")
-    print()
-    print("2. After signing in, copy the ENTIRE redirect URL from the browser's")
-    print("   address bar (it will start with https://localhost/?code=...) and paste below.")
-    print("   You can also paste just the code value if you prefer.")
-    print()
-    try:
-        pasted = input("Paste redirect URL or code: ").strip()
-    except EOFError:
+def _parse_callback(value: str, expected_state: str) -> tuple[Optional[str], Optional[str]]:
+    """Parse a pasted redirect URL or bare code. Returns (code, error_message)."""
+    value = (value or "").strip()
+    if not value:
         return None, "No input received."
-
-    if not pasted:
-        return None, "No input received."
-
-    if pasted.startswith(("http://", "https://")):
-        qs = parse_qs(urlsplit(pasted).query, keep_blank_values=True)
+    if value.startswith(("http://", "https://")):
+        qs = parse_qs(urlsplit(value).query, keep_blank_values=True)
         code = (qs.get("code") or [None])[0]
         state = (qs.get("state") or [None])[0]
         error = (qs.get("error") or [None])[0]
         if error:
             return None, f"Adobe returned error: {error}"
         if state and state != expected_state:
-            return None, "OAuth state mismatch — possible CSRF. Aborting."
+            return None, "OAuth state mismatch - possible CSRF. Aborting."
         if not code:
             return None, "Pasted URL did not contain a 'code' parameter."
         return code, None
-    return pasted, None  # bare code; state not verifiable
+    return value, None  # bare code; state not verifiable
+
+
+def _watch_clipboard_for_callback(timeout_seconds: float = 180.0) -> Optional[str]:
+    """Poll the system clipboard for a new URL matching our callback shape.
+
+    Returns the URL the moment one appears, or None on timeout / no clipboard
+    access. Uses tkinter (stdlib) so it works on Windows / macOS / Linux with
+    a display. Headless systems silently fall through to manual paste.
+    """
+    try:
+        import tkinter as tk
+    except ImportError:
+        return None
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        return None
+    root.withdraw()
+    try:
+        try:
+            initial = root.clipboard_get()
+        except tk.TclError:
+            initial = ""
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            try:
+                root.update()  # keep tk event loop responsive
+                current = root.clipboard_get()
+            except tk.TclError:
+                current = ""
+            if (
+                current
+                and current != initial
+                and current.startswith(("http://localhost", "https://localhost"))
+                and "code=" in current
+            ):
+                return current.strip()
+            time.sleep(0.5)
+        return None
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def _manual_paste_flow(authorize_url: str, expected_state: str) -> tuple[Optional[str], Optional[str]]:
+    """Capture the OAuth code via clipboard watch + manual paste fallback.
+
+    Adobe Web App credentials require an HTTPS redirect, so we can't auto-
+    catch the callback over a local HTTP loopback. Instead, we watch the
+    user's clipboard: the moment they copy the redirect URL from their
+    browser's address bar (a natural Ctrl-L Ctrl-C after the page errors
+    out), we detect it and continue. Ctrl-C falls back to a paste prompt.
+    """
+    print()
+    print("In your browser:")
+    print("  1. Sign in to Adobe and click Allow.")
+    print("  2. The page will show \"site can't be reached\" - that is correct.")
+    print("  3. Copy the URL from the address bar (Ctrl+L, Ctrl+C).")
+    print()
+    print(f"  If the browser didn't open, visit:\n    {authorize_url}")
+    print()
+    print("Watching clipboard... (Ctrl+C to paste manually instead)")
+
+    try:
+        url = _watch_clipboard_for_callback(timeout_seconds=180.0)
+    except KeyboardInterrupt:
+        url = None
+        print()  # newline after ^C
+    if url:
+        print("  Got it from clipboard.")
+        return _parse_callback(url, expected_state)
+
+    # Clipboard timeout or interrupted — fall back to typed paste.
+    print()
+    try:
+        pasted = input("Paste the URL (or just the code value): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None, "No input received."
+    return _parse_callback(pasted, expected_state)
 
 
 def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: bool = False) -> int:
@@ -434,15 +482,9 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: b
     expected_path = urlsplit(redirect_uri).path or "/callback"
 
     # Auto-switch to manual mode when the redirect URI cannot host an
-    # http loopback (e.g. Adobe's required https://localhost).
+    # http loopback (Adobe Web App credentials require HTTPS).
     if not manual and not _is_loopback_capturable(redirect_uri):
         manual = True
-        print()
-        print(
-            "Note: FRAMEIO_REDIRECT_URI is "
-            f"{redirect_uri!r} — switching to manual paste mode "
-            "since we can't host an HTTP loopback at that address."
-        )
 
     code_verifier, code_challenge = _pkce_pair()
     state = secrets.token_urlsafe(24)
@@ -459,6 +501,8 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: b
     )
 
     if manual:
+        print()
+        print("Opening Adobe to sign in...")
         if not no_browser:
             try:
                 webbrowser.open(authorize_url)
@@ -536,8 +580,8 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: b
     _save_token_cache(cache, cfg.token_file)
 
     print()
-    print(f"Authenticated as {email or '(email unavailable)'}.")
-    print(f"Token cache saved: {cfg.token_file}")
+    print(f"  Connected as {email or '(email unavailable)'}.")
+    print(f"  Next: frameio-agent verify")
     return 0
 
 
