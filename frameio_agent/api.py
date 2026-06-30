@@ -168,3 +168,22 @@ def list_comments(
             page_size=page_size,
         )
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Share creation — the ONE mutation in v1 (see PRD §11.8)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def create_share(
+    client: FrameioClient,
+    account_id: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """POST a new review share. Body shape comes from shares.build_payload()."""
+    payload = client.request(
+        "POST",
+        f"/accounts/{account_id}/shares",
+        json_body=body,
+        accept_status=(200, 201),
+    )
+    return payload.get("data") or payload

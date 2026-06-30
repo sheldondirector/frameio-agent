@@ -51,11 +51,12 @@ python -m frameio_agent.cli comments <file_id> --json
 - **`search "<query>" --project <id>`** — capped name search for when you need a specific asset.
 - **`comments <file_id> --json`** — review notes normalized with both human `timecode` and numeric `timestamp_seconds`, plus author and thread info.
 - **`brief --project <id>`** — one-paragraph "what's going on in this project."
+- **`share create <file_id> [<file_id>...] --name "..."`** — the one mutation in v1. Bundles assets into a Frame.io review share and returns the URL. Prints a confirmation summary and waits for `y/N` before sending; pass `--yes` to skip. Default visibility is `--public` (anyone with the URL); use `--restricted` for signed-in users only. Passwords are never echoed.
 
 ## Security
 
-- **Read-only.** v1 cannot upload, delete, rename, move, or share. By design.
-- **Secrets stay local.** `.env` and `~/.frameio-agent/tokens.json` are git-ignored. The CLI redacts token-like values from any output.
+- **Read by default, one explicit mutation.** v1 cannot upload, delete, rename, move, or change permissions. The only write operation is `share create`, which prints a confirmation summary and requires `y/N` (or an explicit `--yes`) before sending. See [PRD §5, §8, §11.8](PRD.md) for the full scope.
+- **Secrets stay local.** `.env` and `~/.frameio-agent/tokens.json` are git-ignored. The CLI redacts token-like values from any output. Share passwords are never echoed.
 - **Bring your own credentials.** The wizard helps you create an Adobe Developer Console OAuth Web App; nothing is ever sent to the maintainers.
 
 ## Optional: MCP

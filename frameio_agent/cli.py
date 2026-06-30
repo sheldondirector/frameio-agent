@@ -89,6 +89,47 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument("--project", required=True, help="Project ID.")
     _add_json_flag(brief)
 
+    # share (the one mutation — gated by confirmation; see PRD §11.8)
+    share = sub.add_parser("share", help="Create a Frame.io review share (the only mutation in v1).")
+    share_sub = share.add_subparsers(dest="share_command", metavar="<subcommand>")
+    share_create = share_sub.add_parser(
+        "create",
+        help="Bundle one or more assets into a review share and return the URL.",
+    )
+    share_create.add_argument("file_ids", nargs="+", help="One or more file IDs to include in the share.")
+    share_create.add_argument("--name", required=True, help="Human label for the share (shown in Frame.io).")
+    share_create.add_argument(
+        "--allow-comments", dest="allow_comments", action="store_true", default=True,
+        help="Allow recipients to leave comments (default).",
+    )
+    share_create.add_argument(
+        "--no-comments", dest="allow_comments", action="store_false",
+        help="Disallow comments from recipients.",
+    )
+    share_create.add_argument(
+        "--allow-download", dest="allow_download", action="store_true", default=False,
+        help="Allow recipients to download originals.",
+    )
+    share_create.add_argument(
+        "--no-download", dest="allow_download", action="store_false",
+        help="Disallow downloads (default).",
+    )
+    share_create.add_argument("--expires", dest="expires_at", default=None, help="Optional ISO date for expiration.")
+    share_create.add_argument("--password", default=None, help="Optional password protection (never echoed).")
+    share_create.add_argument(
+        "--public", dest="public", action="store_true", default=True,
+        help="Anyone with the URL can view (default).",
+    )
+    share_create.add_argument(
+        "--restricted", dest="public", action="store_false",
+        help="Only signed-in Frame.io users can view.",
+    )
+    share_create.add_argument(
+        "--yes", action="store_true",
+        help="Skip the y/N confirmation. Only use when the user has explicitly authorized this share.",
+    )
+    _add_json_flag(share_create)
+
     # mcp (optional layer)
     sub.add_parser("mcp", help="Run as an MCP server (optional; CLI works without it).")
 
@@ -146,6 +187,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "brief":
             from .brief import cmd_brief
             return cmd_brief(project=args.project, as_json=args.json, emit=_emit)
+
+        if args.command == "share":
+            if args.share_command == "create":
+                from .shares import cmd_share_create
+                return cmd_share_create(
+                    file_ids=args.file_ids,
+                    name=args.name,
+                    allow_comments=args.allow_comments,
+                    allow_download=args.allow_download,
+                    expires_at=args.expires_at,
+                    password=args.password,
+                    public=args.public,
+                    yes=args.yes,
+                    as_json=args.json,
+                    emit=_emit,
+                )
+            parser.parse_args(["share", "--help"])
+            return 2
 
         if args.command == "mcp":
             try:

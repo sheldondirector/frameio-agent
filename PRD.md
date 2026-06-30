@@ -1,12 +1,18 @@
 # Frame.io Agent Starter — PRD
 
-**Status:** Draft v0.2
+**Status:** Draft v0.3
 **Primary audience:** Newbie agent users who already use Frame.io and have a frontier coding agent (Claude Code, OpenAI Codex CLI, Cursor, Gemini CLI, or similar).
 **Core thesis:** The lowest-barrier product is not "configure an MCP server." It is a tiny, self-contained repo that any coding agent can read, install, authenticate, verify, and use through a simple CLI with JSON output. MCP is optional after the CLI works.
 
-**Scope guardrail (read this first):** This tool is **Frame.io and nothing else**. No video editing, no media processing, no cataloging, no external services. Read-only access to Frame.io projects, assets, and comments. If a feature isn't "talk to Frame.io and return data," it does not belong in this repo.
+**Scope guardrail (read this first):** This tool is **Frame.io and nothing else**. No video editing, no media processing, no cataloging, no external services. Read-only access to Frame.io projects, assets, and comments — **plus exactly one mutation: creating review shares** (a `share create` command, gated by an interactive confirmation by default). Upload, delete, rename, move, and permission changes remain hard-no. If a feature isn't "talk to Frame.io and return data, or create a single review share with explicit confirmation," it does not belong in this repo.
 
 ---
+
+## What changed in v0.3 (deltas from v0.2)
+
+1. **One mutation is now in scope: `share create`.** v0.2 forbade all mutation. v0.3 carves out exactly one — creating a Frame.io review share that bundles one or more assets — because "find the latest cut, then send the director a link" is the natural next step after the north-star. All other mutations (upload/delete/rename/move/permission/share-revoke/share-modify) remain hard-no. See §5 P2, §8, §11.8, §16, §23, §25.
+2. **Safety stance preserved via three constraints on the new command** (§11.8): public-link visibility default, an interactive y/N confirmation that prints the full share config before any POST, and a `--yes` bypass that an agent MUST only use when the user has explicitly authorized the share.
+3. AGENTS.md changes from a blanket mutation prohibition to a one-item allow-list — agents must not add other mutation commands even if asked.
 
 ## What changed in v0.2 (deltas from v0.1)
 
@@ -63,7 +69,7 @@ The first useful experience should feel like:
 ## 5. Product principles
 
 1. **CLI first, MCP optional.** Every useful operation works through local commands before MCP exists.
-2. **Read-only, always (v1).** No upload, delete, move, rename, or share. Period.
+2. **Read-only by default, with exactly one explicit mutation.** Read-only is the resting state. The single mutation — `share create` (§11.8) — is gated by a confirmation prompt and requires the user to opt into a `--yes` bypass. No upload, delete, move, rename, or permission change. No share modification or revocation. Period.
 3. **Agent-readable by design.** Every command supports `--json` and clear exit codes.
 4. **No secrets in output.** Tokens and auth codes redacted by default.
 5. **Beginner-safe errors.** Every failure tells the user/agent exactly what to run next.
@@ -78,9 +84,9 @@ The first useful experience should feel like:
 **Public name:** Frame.io Agent Starter
 **Subtitle:** Give your coding agent safe, read-only access to your Frame.io projects.
 
-**Plain-English promise:** Connect Frame.io to Claude Code, Cursor, Codex, Gemini CLI, or any agent that can run local commands. Your agent can list projects, find the latest cut, and summarize review comments — and it can't touch your edit.
+**Plain-English promise:** Connect Frame.io to Claude Code, Cursor, Codex, Gemini CLI, or any agent that can run local commands. Your agent can list projects, find the latest cut, summarize review comments, and send a director a review link — and it can't touch your edit, delete files, or change permissions.
 
-**The edge (what makes it worth using):** the *beginner onboarding* + *read-only safety* + *agent-agnostic CLI*. It is **not** a new API, a Transfer replacement, or an automation platform. Its job is to make the first connection painless and the first win obvious.
+**The edge (what makes it worth using):** the *beginner onboarding* + *bounded safety* (read-only + one confirmation-gated mutation) + *agent-agnostic CLI*. It is **not** a new API, a Transfer replacement, or an automation platform. Its job is to make the first connection painless and the first two wins obvious: *see what the director said*, *send the next cut for review*.
 
 **Disclaimer (must appear in README + repo footer):** *Unofficial community tool. Not affiliated with, endorsed by, or supported by Adobe or Frame.io. "Frame.io" is a trademark of Adobe.*
 
@@ -116,13 +122,14 @@ frameio-agent comments <file_id> --json          # pull the notes (text + timeco
 | `search` (name/path, capped) | Find a named asset when recency isn't enough. |
 | `comments` | Pull review notes (text, timecode, author, thread) for a file. |
 | `brief` | One-paragraph "what's going on in this project." |
+| **`share create` (the one mutation)** | **Bundle one or more assets into a review share with a URL the user can send to the director. Always gated by a confirmation prompt; `--yes` bypass for trusted agent flows.** |
 | `--json` everywhere | Any agent can parse results. |
 | `AGENTS.md` | Coding agents know the rules and the safe workflow. |
 | `.env.example` | Humans understand config without secrets. |
 
 ### Out of scope for v1 (hard no)
 
-Uploading · deleting · moving/renaming · creating shares · permission changes · bulk downloads · browser/GraphQL scraping fallbacks · any non-Frame.io service · any local media processing/editing/cataloging · required MCP · hosted SaaS or remote token storage.
+Uploading · deleting · moving/renaming · permission changes · **modifying or revoking existing shares** · **listing existing shares** (deferred to v1.2) · bulk downloads · browser/GraphQL scraping fallbacks · any non-Frame.io service · any local media processing/editing/cataloging · required MCP · hosted SaaS or remote token storage. **Note: `share create` is the only mutation in v1 — adding any other mutation, even a sibling like `share revoke`, is out of scope and requires a PRD update first.**
 
 ---
 
@@ -262,6 +269,70 @@ frameio-agent brief --project <id>          # human text; --json for structured
 ```
 A concise newbie-friendly project status: recent assets (with comment counts) + 2–3 "likely next actions." Built only from data the read-only calls already return.
 
+### 11.8 `share create` (the one mutation — gated by confirmation)
+
+```bash
+frameio-agent share create <file_id> [<file_id> ...] --name "Director review — v4" [flags]
+```
+
+The only command in v1 that writes to Frame.io. Bundles one or more asset IDs into a single share and returns the public URL. Designed for the "send the director the next cut" moment that naturally follows the north-star.
+
+**Flags:**
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--name "..."` | *required* | Human label for the share (shown in Frame.io UI and in confirmation output). |
+| `--allow-comments` / `--no-comments` | allow | Whether recipients can leave comments. |
+| `--allow-download` / `--no-download` | **no** | Whether recipients can download originals. Safer default. |
+| `--expires <ISO-date>` | none | Optional expiration (e.g. `2026-07-15`). |
+| `--password "..."` | none | Optional password gate. Never echoed back; redacted in any log line. |
+| `--public` / `--restricted` | **public** | `public` = anyone with the URL can view; `restricted` = signed-in Frame.io users only. |
+| `--yes` | off | Skip the interactive y/N confirmation prompt. **Agents must only set this when the user has explicitly authorized creating the share in this conversation.** |
+| `--json` | off | Emit the response as JSON. |
+
+**Confirmation flow (default):**
+
+```text
+About to create a Frame.io share:
+  Name:         Director review — v4
+  Visibility:   public link (anyone with URL)
+  Assets:       2 files
+                  - Rough Cut v4.mov   (file_xxx1)
+                  - Color Pass v2.mov  (file_xxx2)
+  Comments:     allowed
+  Download:     not allowed
+  Expires:      never
+  Password:     none
+
+Create this share? [y/N]:
+```
+
+If stdin isn't a TTY and `--yes` is absent, the command refuses with a clear remediation. Passwords are never echoed in the confirmation summary; only "set" / "none" is shown.
+
+**Output (`--json`):**
+
+```json
+{
+  "share_id": "...",
+  "name": "Director review — v4",
+  "url": "https://f.io/p/xxxxxx",
+  "visibility": "public",
+  "allow_comments": true,
+  "allow_download": false,
+  "expires_at": null,
+  "password_protected": false,
+  "asset_count": 2,
+  "asset_ids": ["...", "..."],
+  "created_at": "2026-06-30T13:00:00Z"
+}
+```
+
+**What `share create` does NOT do (and the CLI must reject):**
+
+- It does not list, modify, or revoke any existing share. Those endpoints exist in Frame.io V4 — the CLI just doesn't call them.
+- It does not upload anything. The assets must already exist in Frame.io.
+- It does not auto-`--yes` itself, even on retry; the agent must surface the prompt to the user.
+
 ---
 
 ## 12. Optional MCP layer
@@ -270,7 +341,7 @@ Not the first-run path. An optional adapter over the same internal functions —
 ```bash
 frameio-agent mcp
 ```
-Tools: `frameio_auth_status`, `frameio_list_projects`, `frameio_latest`, `frameio_search_assets`, `frameio_get_comments`, `frameio_brief_project`.
+Tools: `frameio_auth_status`, `frameio_list_projects`, `frameio_latest`, `frameio_search_assets`, `frameio_get_comments`, `frameio_brief_project`, `frameio_create_share` (must require an explicit `confirm: true` argument from the calling agent — the MCP layer enforces the same gate the CLI does).
 README: *"If your agent supports MCP, run this as an MCP server. If not, your agent can call the CLI directly."*
 
 ---
@@ -367,7 +438,7 @@ frameio-agent-starter/
 
 **Secret handling.** Never print raw env values for keys containing `TOKEN`, `SECRET`, `KEY`, `CODE`, `AUTH`. Redact URL query params named `code`, `access_token`, `refresh_token`, `client_secret`, `Signature`, `X-Amz-Signature`. Token file gets private perms where the OS supports it.
 
-**Read-only default.** v1 must not mutate Frame.io state except OAuth token refresh + local token cache. Allowed calls: user/account/workspace/project/folder/file list+show, comments list. Disallowed in v1: upload, delete, move, rename, share create, permission changes.
+**Bounded-write default.** v1 must not mutate Frame.io state except: (a) OAuth token refresh, (b) local token cache writes, and (c) **the single `share create` POST** described in §11.8, which is guarded by an interactive prompt and the `--yes` bypass policy. Allowed read calls: user/account/workspace/project/folder/file list+show, comments list, share-creation POST. Disallowed in v1: upload, delete, move, rename, permission changes, share modification, share revocation, share listing.
 
 ---
 
@@ -381,6 +452,8 @@ frameio-agent-starter/
 | Multiple accounts | `Found multiple accounts. Re-run with --account <id>.` |
 | Traversal cap hit | `Traversal cap reached. Try `latest` instead, or narrow with --folder <id>.` |
 | No results | `No matching assets. Try `latest`, or list projects first.` |
+| Share create on non-TTY without --yes | `Share creation requires interactive confirmation; stdin is not a TTY. Re-run with --yes if the user has explicitly authorized creating this share.` |
+| Share create scope missing | `Frame.io rejected the share request (insufficient scope). Run: frameio-agent auth login` |
 
 ---
 
@@ -450,18 +523,20 @@ Do not print secrets. Prefer --json when parsing.
 3. **Demo content?** → Use a **sandbox or the user's own project**, anonymized; never ship real third-party media in examples.
 4. **Summarize in CLI or agent?** → **CLI returns comments; the agent summarizes.** (Keeps the tool dumb, safe, and model-agnostic.)
 5. **Test matrix?** → **Claude Code, OpenAI Codex CLI, Cursor** (and Gemini CLI if time). Public matrix only — no internal/proprietary agents.
+6. **Default share visibility (v0.3)?** → **Public link.** Matches the most common "send the director a review URL" workflow. Recipients don't need a Frame.io account. The agent must show the user what `public` means in the confirmation summary before creating.
+7. **Share create confirmation policy (v0.3)?** → **Always interactive y/N by default; `--yes` bypasses.** Agents must only set `--yes` when the user has explicitly authorized that specific share in the current conversation. On non-TTY stdin without `--yes`, the command refuses.
 
 ---
 
 ## 23. Roadmap
 
 - **v0.1** — skeleton: structure, `AGENTS.md`, `.env.example`, `auth status` with mocked client, redaction tests.
-- **v0.2** — real read-only: `auth login` (wizard + PKCE loopback), `verify`, `projects`.
-- **v0.3** — `latest` (recency-first), `search` (capped), `comments` (normalized), `brief`; JSON contracts frozen.
-- **v0.4** — optional MCP wrapper mirroring the CLI; example configs for Claude Code / Cursor.
-- **v0.5** — polished README + success GIF; tested against ≥ 2 agents; `pipx` / `uvx` packaging.
-- **v1.0** — public beginner release. Read-only, no mutation tools, unaffiliated disclaimer.
-- **Later (separate, opt-in, explicit confirmation each):** read-only share-link resolver; safe download-list. *Mutation features (upload/share) are out of this product's identity and should be a different repo if ever built.*
+- **v0.2** — real read-only: `auth login` (wizard + PKCE loopback), `verify`, `projects`, `latest`, `search`, `comments`, `brief`; JSON contracts frozen.
+- **v0.3** — adds `share create` (the one mutation), with public-link default + interactive confirmation + `--yes` bypass; OAuth scope updated to allow the write call; AGENTS.md changed from blanket prohibition to one-item allow-list.
+- **v0.4** — optional MCP wrapper mirroring the CLI (including `frameio_create_share` with `confirm:true` gate); example configs for Claude Code / Cursor.
+- **v0.5** — polished README + success GIF (both moments: see-comments AND send-share); tested against ≥ 2 agents; `pipx` / `uvx` packaging.
+- **v1.0** — public beginner release: read + the single share-create mutation, unaffiliated disclaimer.
+- **Later (separate, opt-in, explicit confirmation each):** v1.2 may add `share list` + `share revoke` (still mutations on shares only, never on assets). *Upload, delete, rename, move, permission changes, and any non-Frame.io ingestion (YouTube, etc.) remain out of this product's identity and should be a different repo if ever built.*
 
 ---
 
@@ -493,8 +568,15 @@ Execute in order; verify each before moving on.
 
 If a first-time user or coding agent has to understand MCP, Adobe SDK internals, GraphQL share auth, S3 upload headers, or Frame.io Transfer to get value, **v1 has failed.**
 
-The first win must be:
-```text
-connect → verify → find latest cut → summarize its review comments
-```
-Everything in this repo serves that one sentence. Anything that doesn't is out of scope.
+The two wins v1 must nail (and only these two):
+
+1. **See the notes:**
+   ```text
+   connect → verify → find latest cut → summarize its review comments
+   ```
+2. **Send the next cut:**
+   ```text
+   find the assets → share create --name "..." [files...] → review URL
+   ```
+
+Everything in this repo serves those two sentences. Anything else — uploads, deletes, permission edits, YouTube ingestion, share management, automation orchestration — is out of scope and belongs in a different repo.
