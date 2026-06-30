@@ -25,45 +25,57 @@ def build_payload(
     *,
     name: str,
     asset_ids: list[str],
-    allow_comments: bool,
     allow_download: bool,
     expires_at: Optional[str],
     password: Optional[str],
     public: bool,
 ) -> dict[str, Any]:
-    """Translate CLI flags into the share-creation request body.
+    """Translate CLI flags into the V4 ``CreateShareParams`` body.
 
-    Field names follow Frame.io V4 conventions; if a field is rejected by the
-    live API we fix it in this one function. Nothing else should mint share
-    payloads.
+    Spec: ``POST /v4/accounts/{acct}/projects/{proj}/shares`` with::
+
+        {"data": {
+            "type": "asset",           # required discriminator
+            "name": "...",
+            "asset_ids": ["..."],
+            "access": "public" | "secure",
+            "downloading_enabled": bool,
+            "expiration": "ISO timestamp",
+            "passphrase": "..."
+        }}
+
+    NOTE: ``commenting_enabled`` is read-only on the Share response and is
+    NOT a valid CreateShareParams field — comments behavior is set by the
+    project, not the share. The CLI's --allow-comments / --no-comments
+    flags are accepted for forward-compat and currently no-op.
     """
-    body: dict[str, Any] = {
+    inner: dict[str, Any] = {
+        "type": "asset",
         "name": name,
         "asset_ids": list(asset_ids),
-        "allow_comments": allow_comments,
-        "allow_download": allow_download,
-        "access": "public" if public else "restricted",
+        "access": "public" if public else "secure",
+        "downloading_enabled": allow_download,
     }
     if expires_at:
-        body["expires_at"] = expires_at
+        inner["expiration"] = expires_at
     if password:
-        body["password"] = password
-    return body
+        inner["passphrase"] = password
+    return {"data": inner}
 
 
 def _render_confirmation(payload: dict[str, Any]) -> str:
+    d = payload["data"]
     lines = [
         "About to create a Frame.io share:",
-        f"  Name:         {payload['name']}",
-        f"  Visibility:   {'public link (anyone with URL)' if payload['access'] == 'public' else 'restricted (signed-in Frame.io users only)'}",
-        f"  Assets:       {len(payload['asset_ids'])} file(s)",
+        f"  Name:         {d['name']}",
+        f"  Visibility:   {'public link (anyone with URL)' if d['access'] == 'public' else 'secure (passphrase or signed-in Frame.io users)'}",
+        f"  Assets:       {len(d['asset_ids'])} file(s)",
     ]
-    for aid in payload["asset_ids"]:
+    for aid in d["asset_ids"]:
         lines.append(f"                  - {aid}")
-    lines.append(f"  Comments:     {'allowed' if payload['allow_comments'] else 'not allowed'}")
-    lines.append(f"  Download:     {'allowed' if payload['allow_download'] else 'not allowed'}")
-    lines.append(f"  Expires:      {payload.get('expires_at') or 'never'}")
-    lines.append(f"  Password:     {'set' if payload.get('password') else 'none'}")
+    lines.append(f"  Download:     {'allowed' if d['downloading_enabled'] else 'not allowed'}")
+    lines.append(f"  Expires:      {d.get('expiration') or 'never'}")
+    lines.append(f"  Password:     {'set' if d.get('passphrase') else 'none'}")
     return "\n".join(lines)
 
 
@@ -78,17 +90,18 @@ def _prompt_confirm() -> bool:
 
 def _normalize_share_response(raw: dict[str, Any], request_body: dict[str, Any]) -> dict[str, Any]:
     """Coerce Frame.io's response into the JSON contract documented in AGENTS.md."""
+    d = request_body["data"]
     return {
         "share_id": raw.get("id") or raw.get("share_id"),
-        "name": raw.get("name") or request_body["name"],
-        "url": raw.get("url") or raw.get("short_url") or raw.get("share_url"),
-        "visibility": raw.get("access") or request_body["access"],
-        "allow_comments": raw.get("allow_comments", request_body["allow_comments"]),
-        "allow_download": raw.get("allow_download", request_body["allow_download"]),
-        "expires_at": raw.get("expires_at"),
-        "password_protected": bool(raw.get("password") or request_body.get("password")),
-        "asset_count": len(request_body["asset_ids"]),
-        "asset_ids": request_body["asset_ids"],
+        "name": raw.get("name") or d["name"],
+        "url": raw.get("short_url") or raw.get("url"),
+        "visibility": raw.get("access") or d["access"],
+        "allow_comments": raw.get("commenting_enabled"),
+        "allow_download": raw.get("downloading_enabled", d["downloading_enabled"]),
+        "expires_at": raw.get("expiration"),
+        "password_protected": bool(raw.get("passphrase") or d.get("passphrase")),
+        "asset_count": len(d["asset_ids"]),
+        "asset_ids": d["asset_ids"],
         "created_at": raw.get("created_at"),
     }
 
@@ -97,7 +110,7 @@ def cmd_share_create(
     *,
     file_ids: list[str],
     name: str,
-    allow_comments: bool,
+    allow_comments: bool,  # accepted for forward-compat; V4 doesn't expose at create
     allow_download: bool,
     expires_at: Optional[str],
     password: Optional[str],
@@ -117,7 +130,6 @@ def cmd_share_create(
     payload = build_payload(
         name=name,
         asset_ids=file_ids,
-        allow_comments=allow_comments,
         allow_download=allow_download,
         expires_at=expires_at,
         password=password,
@@ -146,7 +158,15 @@ def cmd_share_create(
     try:
         with FrameioClient(cfg) as client:
             account_id = _resolve_account_for_file(client, file_ids[0])
-            raw = api.create_share(client, account_id, payload)
+            # V4 shares are project-scoped — resolve project_id from the first file.
+            file_meta = api.get_file(client, account_id, file_ids[0])
+            project_id = file_meta.get("project_id")
+            if not project_id:
+                raise FrameioAgentError(
+                    f"Could not resolve project_id for file {file_ids[0]}.",
+                    remediation="Verify the file_id with `latest` or `search`.",
+                )
+            raw = api.create_share(client, account_id, project_id, payload)
     except AuthError as e:
         # Hint at scope issues, which are the most likely failure mode for write.
         rendered = e.render()
@@ -160,7 +180,21 @@ def cmd_share_create(
         print(f"Error: {rendered}", file=sys.stderr)
         return 1
     except FrameioAgentError as e:
-        print(f"Error: {e.render()}", file=sys.stderr)
+        rendered = e.render()
+        if "feature(s) not included in plan" in rendered:
+            # Surface Frame.io plan limitations clearly. The plan-gated feature
+            # name is in the error (e.g. "secure_sharing").
+            print(
+                f"Error: This Frame.io plan does not include the feature required for "
+                f"the requested share options.\n  > {rendered.split(' on POST')[0]}",
+                file=sys.stderr,
+            )
+            print(
+                "  > Try `--public` instead of `--restricted`, or upgrade your Frame.io plan.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Error: {rendered}", file=sys.stderr)
         return 1
 
     normalized = _normalize_share_response(raw, payload)

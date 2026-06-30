@@ -197,12 +197,18 @@ def list_comments(
 def create_share(
     client: FrameioClient,
     account_id: str,
+    project_id: str,
     body: dict[str, Any],
 ) -> dict[str, Any]:
-    """POST a new review share. Body shape comes from shares.build_payload()."""
+    """POST a new review share. Endpoint is project-scoped per V4 OpenAPI spec.
+
+    Body must wrap fields in ``{"data": {"type": "asset", ...}}`` — the
+    discriminator field ``type`` is required and currently has the single
+    value ``"asset"``. ``access`` is ``"public"`` or ``"secure"``.
+    """
     payload = client.request(
         "POST",
-        f"/accounts/{account_id}/shares",
+        f"/accounts/{account_id}/projects/{project_id}/shares",
         json_body=body,
         accept_status=(200, 201),
     )
