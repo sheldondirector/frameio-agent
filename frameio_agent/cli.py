@@ -105,6 +105,20 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument("--project", required=True, help="Project ID.")
     _add_json_flag(brief)
 
+    # refs (founder-tier: pull a reference into Frame.io)
+    refs = sub.add_parser("refs", help="Pull a reference into a Frame.io folder (local file, direct URL, or YouTube/X).")
+    refs_sub = refs.add_subparsers(dest="refs_command", metavar="<subcommand>")
+    refs_add = refs_sub.add_parser("add", help="Add a reference to a folder. Auto-detects local / remote / yt-dlp.")
+    refs_add.add_argument("source", help="Local path, direct URL, or YouTube/Vimeo/X/TikTok URL.")
+    refs_add.add_argument("--folder", required=True, help="Target Frame.io folder ID.")
+    refs_add.add_argument("--name", default=None, help="Override the file name shown in Frame.io.")
+    refs_add.add_argument(
+        "--via", choices=("local", "remote_upload", "yt_dlp"), default=None,
+        help="Force a specific upload mode. Default: auto-detect.",
+    )
+    refs_add.add_argument("--yes", action="store_true", help="Skip the y/N confirmation.")
+    _add_json_flag(refs_add)
+
     # share (the one mutation — gated by confirmation; see PRD §11.8)
     share = sub.add_parser("share", help="Create a Frame.io review share (the only mutation in v1).")
     share_sub = share.add_subparsers(dest="share_command", metavar="<subcommand>")
@@ -205,6 +219,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "brief":
             from .brief import cmd_brief
             return cmd_brief(project=args.project, as_json=args.json, emit=_emit)
+
+        if args.command == "refs":
+            if args.refs_command == "add":
+                from .refs import cmd_refs_add
+                return cmd_refs_add(
+                    source=args.source,
+                    folder=args.folder,
+                    name=args.name,
+                    via=args.via,
+                    yes=args.yes,
+                    as_json=args.json,
+                    emit=_emit,
+                )
+            parser.parse_args(["refs", "--help"])
+            return 2
 
         if args.command == "share":
             if args.share_command == "create":

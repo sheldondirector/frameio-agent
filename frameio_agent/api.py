@@ -195,6 +195,98 @@ def list_comments(
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Uploads (the founder-tier mutation for `refs add`)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def create_file_local_upload(
+    client: FrameioClient,
+    account_id: str,
+    folder_id: str,
+    *,
+    name: str,
+    file_size: int,
+) -> dict[str, Any]:
+    """POST /folders/{id}/files/local_upload. Returns a File with upload_urls.
+
+    Frame.io returns one or more pre-signed PUT URLs, each with the chunk
+    size it expects. Caller must PUT the file's bytes to each URL in order
+    (use :func:`put_chunks_to_signed_urls`).
+    """
+    body = {"data": {"name": name, "file_size": int(file_size)}}
+    payload = client.request(
+        "POST",
+        f"/accounts/{account_id}/folders/{folder_id}/files/local_upload",
+        json_body=body,
+        accept_status=(200, 201),
+    )
+    return payload.get("data") or payload
+
+
+def create_file_remote_upload(
+    client: FrameioClient,
+    account_id: str,
+    folder_id: str,
+    *,
+    name: str,
+    source_url: str,
+) -> dict[str, Any]:
+    """POST /folders/{id}/files/remote_upload. Frame.io fetches the URL itself.
+
+    Best for direct media URLs that Frame.io can reach without auth.
+    Returns a File whose ``status`` will progress created -> uploaded ->
+    transcoded as the async fetch completes.
+    """
+    body = {"data": {"name": name, "source_url": source_url}}
+    payload = client.request(
+        "POST",
+        f"/accounts/{account_id}/folders/{folder_id}/files/remote_upload",
+        json_body=body,
+        accept_status=(200, 201),
+    )
+    return payload.get("data") or payload
+
+
+def put_chunks_to_signed_urls(
+    file_path: Any,
+    upload_urls: list[dict[str, Any]],
+    *,
+    progress_cb: Optional[Any] = None,
+) -> None:
+    """PUT a local file in chunks to Frame.io's pre-signed URLs, in order.
+
+    Each ``upload_urls[i]`` is ``{"size": N, "url": "..."}``. We open the
+    file once and stream ``size`` bytes per URL. Optional ``progress_cb``
+    is called as ``progress_cb(chunk_idx, total_chunks, bytes_uploaded,
+    total_bytes)`` after each successful chunk.
+    """
+    import httpx as _httpx  # local import to keep api.py's top-level lean
+    total = len(upload_urls)
+    total_bytes = sum(int(u.get("size", 0)) for u in upload_urls)
+    sent = 0
+    with open(file_path, "rb") as f:
+        for i, slot in enumerate(upload_urls):
+            chunk_size = int(slot.get("size") or 0)
+            url = slot.get("url")
+            if not url:
+                raise ApiError(
+                    f"Upload URL {i} missing 'url' field.",
+                    remediation="Re-run; this is a Frame.io API anomaly.",
+                )
+            chunk = f.read(chunk_size) if chunk_size > 0 else f.read()
+            if not chunk:
+                break
+            resp = _httpx.put(url, content=chunk, timeout=600.0)
+            if resp.status_code not in (200, 201, 204):
+                raise ApiError(
+                    f"Chunk {i + 1}/{total} upload failed: HTTP {resp.status_code}.",
+                    remediation="Network glitch? Re-run the command.",
+                )
+            sent += len(chunk)
+            if progress_cb:
+                progress_cb(i + 1, total, sent, total_bytes)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Account-wide search (V4 SearchParams)
 # ──────────────────────────────────────────────────────────────────────────────
 
