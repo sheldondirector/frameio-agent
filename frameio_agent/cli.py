@@ -105,6 +105,21 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument("--project", required=True, help="Project ID.")
     _add_json_flag(brief)
 
+    # contact-sheet (founder-tier: PIL composite of thumbnails)
+    contact = sub.add_parser(
+        "contact-sheet",
+        help="Composite thumbnails from a project or folder into a single PNG grid.",
+    )
+    contact.add_argument("--project", help="Project ID. Either --project or --folder is required.")
+    contact.add_argument("--folder", help="Folder ID. Walks recursively.")
+    contact.add_argument("--out", required=True, help="Output PNG path.")
+    contact.add_argument("--cols", type=int, default=6, help="Grid columns (default: 6).")
+    contact.add_argument("--tile-size", type=int, default=240, help="Max tile width/height in px (default: 240).")
+    contact.add_argument("--max-files", type=int, default=100, help="Cap on files to include (default: 100).")
+    contact.add_argument("--no-labels", action="store_true", help="Omit filename labels under each tile.")
+    contact.add_argument("--parallel", type=int, default=8, help="Concurrent downloads (default: 8).")
+    _add_json_flag(contact)
+
     # refs (founder-tier: pull a reference into Frame.io)
     refs = sub.add_parser("refs", help="Pull a reference into a Frame.io folder (local file, direct URL, or YouTube/X).")
     refs_sub = refs.add_subparsers(dest="refs_command", metavar="<subcommand>")
@@ -219,6 +234,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "brief":
             from .brief import cmd_brief
             return cmd_brief(project=args.project, as_json=args.json, emit=_emit)
+
+        if args.command == "contact-sheet":
+            from .contact_sheet import cmd_contact_sheet
+            return cmd_contact_sheet(
+                project=args.project,
+                folder=args.folder,
+                out=args.out,
+                cols=args.cols,
+                tile_size=args.tile_size,
+                max_files=args.max_files,
+                no_labels=args.no_labels,
+                parallel=args.parallel,
+                as_json=args.json,
+                emit=_emit,
+            )
 
         if args.command == "refs":
             if args.refs_command == "add":
