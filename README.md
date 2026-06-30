@@ -11,7 +11,7 @@ Connect Frame.io to Claude Code, Cursor, Codex, Gemini CLI, or any agent that ca
 ## Quick start (with an agent)
 
 ```bash
-git clone https://github.com/sheldonschwartz/frameio-agent-starter
+git clone https://github.com/sheldondirector/frameio-agent-starter
 cd frameio-agent-starter
 ```
 

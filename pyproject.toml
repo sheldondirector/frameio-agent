@@ -40,8 +40,8 @@ mcp = [
 frameio-agent = "frameio_agent.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/sheldonschwartz/frameio-agent-starter"
-Issues = "https://github.com/sheldonschwartz/frameio-agent-starter/issues"
+Homepage = "https://github.com/sheldondirector/frameio-agent-starter"
+Issues = "https://github.com/sheldondirector/frameio-agent-starter/issues"
 
 [tool.setuptools.packages.find]
 include = ["frameio_agent*"]
