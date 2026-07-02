@@ -45,10 +45,22 @@ If the user asks for one of the above, explain it's out of scope (see PRD §scop
 - **If auth fails**, run `frameio-agent auth login` and ask the user for the redirect URL if needed.
 - **If a write fails with a scope/plan error** (`secure_sharing`, etc.), explain plainly and suggest the public/free alternative.
 
+## Authenticating when YOU (the agent) are driving
+
+`auth login` is for a human at a terminal (interactive prompts + clipboard watch); it will hang or fail from a non-TTY shell tool. Use the two-step flow instead:
+
+1. Ensure `.env` has `FRAMEIO_CLIENT_ID` / `FRAMEIO_CLIENT_SECRET` (ask the user for them if missing — never invent them).
+2. Run `frameio-agent auth start --json` and show the user the `authorize_url`.
+3. Tell the user: sign in, click Allow, then copy the full `https://localhost/?code=...` URL from the browser bar (the page itself will show an error — that's expected) and paste it here.
+4. Run `frameio-agent auth complete "<pasted url>"`. Do not echo the code back; treat the pasted URL as spent after this call.
+5. `frameio-agent verify`.
+
+The pending login expires after 15 minutes; if `auth complete` says so, start over at step 2.
+
 ## Suggested first task (the north-star path)
 
 1. `python scripts/setup.py`
-2. `frameio-agent auth login`
+2. Authenticate (two-step flow above, or `frameio-agent auth login` if the user is at the terminal themselves)
 3. `frameio-agent verify`
 4. `frameio-agent projects --json`
 5. `frameio-agent latest --project <id> --json`

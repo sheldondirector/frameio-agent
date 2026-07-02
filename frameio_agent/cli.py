@@ -58,6 +58,19 @@ def build_parser() -> argparse.ArgumentParser:
     auth_status = auth_sub.add_parser("status", help="Show whether auth tokens are present and valid (no secrets printed).")
     _add_json_flag(auth_status)
 
+    # Non-interactive two-step flow for coding agents (no TTY, no clipboard).
+    auth_start = auth_sub.add_parser(
+        "start",
+        help="Agent-friendly login step 1: print the Adobe sign-in URL (no prompts, no waiting).",
+    )
+    _add_json_flag(auth_start)
+    auth_complete = auth_sub.add_parser(
+        "complete",
+        help='Agent-friendly login step 2: finish with the redirect URL, e.g. auth complete "https://localhost/?code=...".',
+    )
+    auth_complete.add_argument("redirect_or_code", help="The full redirect URL from the browser bar, or just the code value.")
+    _add_json_flag(auth_complete)
+
     # verify
     verify = sub.add_parser("verify", help="Confirm Frame.io connectivity. Exits 0 on success.")
     _add_json_flag(verify)
@@ -254,6 +267,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.auth_command == "status":
                 from .auth import cmd_status
                 return cmd_status(as_json=args.json, emit=_emit)
+            if args.auth_command == "start":
+                from .auth import cmd_start
+                return cmd_start(as_json=args.json, emit=_emit)
+            if args.auth_command == "complete":
+                from .auth import cmd_complete
+                return cmd_complete(redirect_or_code=args.redirect_or_code, as_json=args.json, emit=_emit)
             return _group_help(parser, "auth")
 
         if args.command == "verify":

@@ -380,6 +380,182 @@ def _interactive_credential_capture(cfg: Config) -> Config:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Agent-friendly two-step flow: auth start / auth complete
+#
+# `auth login` is built for a human at a TTY (interactive prompts, clipboard
+# watch). When a coding agent drives the CLI through a shell tool, stdin is
+# not a TTY and long waits fight tool timeouts. The split flow is fully
+# non-interactive:
+#
+#   1. `auth start --json`   -> emits the authorize URL; persists the PKCE
+#                               verifier + state to a pending file (0600).
+#   2. Human signs in, copies the https://localhost/?code=... redirect URL,
+#      and hands it to the agent (pasting it in chat is fine: the code is
+#      single-use, PKCE-bound, and useless without the client secret).
+#   3. `auth complete "<url-or-code>"` -> exchanges and saves the tokens.
+# ──────────────────────────────────────────────────────────────────────────────
+
+PENDING_AUTH_TTL_SECONDS = 900  # 15 minutes
+
+
+def _pending_auth_path(cfg: Config) -> Path:
+    return cfg.token_file.parent / "pending_auth.json"
+
+
+def _save_pending_auth(cfg: Config, data: dict[str, Any]) -> None:
+    path = _pending_auth_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+def _load_pending_auth(cfg: Config) -> Optional[dict[str, Any]]:
+    path = _pending_auth_path(cfg)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if time.time() - float(data.get("created_at", 0)) > PENDING_AUTH_TTL_SECONDS:
+        return None
+    return data
+
+
+def _clear_pending_auth(cfg: Config) -> None:
+    try:
+        _pending_auth_path(cfg).unlink()
+    except OSError:
+        pass
+
+
+def _exchange_and_save(
+    cfg: Config, *, code: str, code_verifier: str, redirect_uri: str,
+) -> tuple[int, Optional[str]]:
+    """Exchange an auth code for tokens and persist them.
+
+    Returns (exit_code, email). Shared by `auth login` and `auth complete`.
+    """
+    try:
+        resp = httpx.post(
+            IMS_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": cfg.client_id,
+                "client_secret": cfg.client_secret,
+                "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
+            },
+            timeout=30.0,
+        )
+    except httpx.HTTPError as e:
+        print(f"Error: network failure during token exchange: {type(e).__name__}", file=sys.stderr)
+        return 2, None
+
+    if resp.status_code != 200:
+        try:
+            err_code = resp.json().get("error", f"HTTP {resp.status_code}")
+        except ValueError:
+            err_code = f"HTTP {resp.status_code}"
+        print(f"Error: token exchange failed ({err_code}).", file=sys.stderr)
+        print("  > Start over: frameio-agent auth start", file=sys.stderr)
+        return 2, None
+
+    body = resp.json()
+    email, user_id = _fetch_userinfo(body.get("access_token"))
+    cache = TokenCache.from_token_response(body, email=email, user_id=user_id)
+    _save_token_cache(cache, cfg.token_file)
+    return 0, email
+
+
+def cmd_start(*, as_json: bool, emit: Callable[[Any, bool], None]) -> int:
+    """Begin the non-interactive OAuth flow: emit the authorize URL."""
+    cfg = load_config()
+    try:
+        cfg.require_oauth_app()
+    except Exception as e:  # ConfigError
+        remediation = getattr(e, "remediation", "")
+        print(f"Error: {e}", file=sys.stderr)
+        print(
+            "  > Set FRAMEIO_CLIENT_ID and FRAMEIO_CLIENT_SECRET in .env first "
+            "(create an OAuth Web App in the Adobe Developer Console with "
+            f"redirect URI {cfg.redirect_uri}).",
+            file=sys.stderr,
+        )
+        return 2
+
+    code_verifier, code_challenge = _pkce_pair()
+    state = secrets.token_urlsafe(24)
+    authorize_url = IMS_AUTHORIZE_URL + "?" + urllib.parse.urlencode(
+        {
+            "client_id": cfg.client_id,
+            "redirect_uri": cfg.redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(cfg.scopes),
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+    _save_pending_auth(cfg, {
+        "state": state,
+        "code_verifier": code_verifier,
+        "redirect_uri": cfg.redirect_uri,
+        "created_at": time.time(),
+    })
+
+    if as_json:
+        emit({
+            "authorize_url": authorize_url,
+            "expires_in_seconds": PENDING_AUTH_TTL_SECONDS,
+            "next": 'Have the user sign in at authorize_url, then run: frameio-agent auth complete "<redirect-url>"',
+        }, True)
+    else:
+        print("Open this URL in a browser and sign in to Adobe:")
+        print(f"  {authorize_url}")
+        print()
+        print('The browser will land on a "site can\'t be reached" page - that is expected.')
+        print("Copy the full URL from the address bar, then run:")
+        print('  frameio-agent auth complete "<that url>"')
+        print(f"(This link expires in {PENDING_AUTH_TTL_SECONDS // 60} minutes.)")
+    return 0
+
+
+def cmd_complete(*, redirect_or_code: str, as_json: bool, emit: Callable[[Any, bool], None]) -> int:
+    """Finish the non-interactive OAuth flow started by `auth start`."""
+    cfg = load_config()
+    pending = _load_pending_auth(cfg)
+    if pending is None:
+        print("Error: no pending login (or it expired).", file=sys.stderr)
+        print("  > Run: frameio-agent auth start", file=sys.stderr)
+        return 2
+
+    code, err = _parse_callback(redirect_or_code, expected_state=pending["state"])
+    if err or not code:
+        print(f"Error: {err or 'no code found in input'}", file=sys.stderr)
+        return 2
+
+    rc, email = _exchange_and_save(
+        cfg,
+        code=code,
+        code_verifier=pending["code_verifier"],
+        redirect_uri=pending["redirect_uri"],
+    )
+    if rc != 0:
+        return rc
+    _clear_pending_auth(cfg)
+
+    if as_json:
+        emit({"ok": True, "authenticated": True, "email": email}, True)
+    else:
+        print(f"  Connected as {email or '(email unavailable)'}.")
+        print("  Next: frameio-agent verify")
+    return 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Public entry points: cmd_login / cmd_status
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -585,38 +761,12 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: b
             return 2
         code = result.code
 
-    # Exchange code for tokens.
-    try:
-        resp = httpx.post(
-            IMS_TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": cfg.client_id,
-                "client_secret": cfg.client_secret,
-                "code_verifier": code_verifier,
-                "redirect_uri": redirect_uri,
-            },
-            timeout=30.0,
-        )
-    except httpx.HTTPError as e:
-        print(f"Error: network failure during token exchange: {type(e).__name__}", file=sys.stderr)
-        return 2
-
-    if resp.status_code != 200:
-        try:
-            err_code = resp.json().get("error", f"HTTP {resp.status_code}")
-        except ValueError:
-            err_code = f"HTTP {resp.status_code}"
-        print(f"Error: token exchange failed ({err_code}).", file=sys.stderr)
-        print("  > Run: frameio-agent auth login", file=sys.stderr)
-        return 2
-
-    body = resp.json()
-    # Fetch userinfo so we can show "Connected as <email>".
-    email, user_id = _fetch_userinfo(body.get("access_token"))
-    cache = TokenCache.from_token_response(body, email=email, user_id=user_id)
-    _save_token_cache(cache, cfg.token_file)
+    # Exchange code for tokens (shared with `auth complete`).
+    rc, email = _exchange_and_save(
+        cfg, code=code, code_verifier=code_verifier, redirect_uri=redirect_uri,
+    )
+    if rc != 0:
+        return rc
 
     print()
     print(f"  Connected as {email or '(email unavailable)'}.")
