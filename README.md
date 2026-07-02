@@ -4,7 +4,7 @@
 
 > **Run Frame.io from your coding agent.**
 
-Your agent can find your latest cut, summarize the director's notes with timecodes, pull a YouTube reference straight into a project folder, build a contact sheet from your last shoot, and send a curated review link to a client — all without opening Frame.io.
+Your agent can find your latest cut, summarize the client notes with timecodes, pull a YouTube reference straight into a project folder, build a contact sheet from your last shoot, and send a curated review link to a client — all without opening Frame.io. 
 
 10-minute setup. Works with **Claude Code**, **Cursor**, **OpenAI Codex CLI**, **Gemini CLI**, or any agent that runs local commands. MCP optional. Read-only by default; every mutation (upload, share) is confirmation-gated.
 
