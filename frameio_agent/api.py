@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any, Iterator, Optional
 
 from .client import FrameioClient
+from .errors import ApiError
 
 
 # ──────────────────────────────────────────────────────────────────────────────
