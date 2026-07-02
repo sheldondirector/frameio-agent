@@ -18,6 +18,7 @@ PIL-free on purpose — downloading raw bytes needs no image library, so
 """
 from __future__ import annotations
 
+import sys
 from typing import Any, Optional
 
 import httpx
@@ -127,6 +128,13 @@ def collect_files(
                 collected.append(child)
                 if len(collected) >= max_files:
                     break
+
+    if queue and (len(collected) >= max_files or seen_folders >= max_folders):
+        print(
+            f"Warning: collection cap reached ({len(collected)} files, {seen_folders} folders scanned); "
+            "results may be partial. Raise --max-files to include more.",
+            file=sys.stderr,
+        )
     return collected
 
 

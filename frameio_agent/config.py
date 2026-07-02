@@ -2,11 +2,17 @@
 
 Resolution order for each key:
   1. Explicit environment variable.
-  2. ``.env`` file at the repo root (loaded via python-dotenv).
+  2. ``.env`` file — searched in the current working directory first, then
+     the package checkout root (which only matters for editable/dev
+     installs; under a normal ``pip install`` that path is site-packages
+     and must never receive user secrets).
   3. Built-in default (only for non-secret values).
 
-Secret-bearing keys never have built-in defaults. Missing required values
-raise :class:`ConfigError` with a remediation message.
+Relative token-cache paths resolve against the directory of the ``.env``
+that was actually loaded; with no ``.env`` at all, secrets live under
+``~/.frameio-agent/``. Secret-bearing keys never have built-in defaults.
+Missing required values raise :class:`ConfigError` with a remediation
+message.
 """
 from __future__ import annotations
 
@@ -25,9 +31,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
 
 DEFAULT_API_BASE = "https://api.frame.io/v4"
-DEFAULT_REDIRECT_URI = "http://localhost:8722/callback"
+# Adobe Web App OAuth credentials require an HTTPS redirect and reject the
+# http loopback form — https://localhost is what the Console accepts and
+# what the clipboard-capture login flow expects.
+DEFAULT_REDIRECT_URI = "https://localhost"
 DEFAULT_TOKEN_FILE = ".frameio-agent/tokens.json"
 DEFAULT_SCOPES = "openid,profile,email,offline_access,additional_info.roles"
+
+
+def find_env_file() -> Optional[Path]:
+    """Locate the .env to load: cwd first, then the dev-checkout root."""
+    for cand in (Path.cwd() / ".env", DEFAULT_ENV_FILE):
+        try:
+            if cand.exists():
+                return cand
+        except OSError:
+            continue
+    return None
 
 
 @dataclass(frozen=True)
@@ -79,30 +99,46 @@ def _split_scopes(raw: str) -> tuple[str, ...]:
     return tuple(p for p in parts if p)
 
 
-def _resolve_token_path(raw: str) -> Path:
-    p = Path(raw).expanduser()
+def _resolve_token_path(raw: Optional[str], env_dir: Optional[Path]) -> Path:
+    """Resolve the token-cache path.
+
+    Relative paths anchor to the directory of the loaded ``.env`` (keeps
+    dev checkouts self-contained). With no ``.env``, secrets default to the
+    user's home — never to the installed package directory, which under a
+    non-editable install is site-packages.
+    """
+    base = env_dir if env_dir is not None else Path.home()
+    p = Path(raw).expanduser() if raw else Path(DEFAULT_TOKEN_FILE)
     if not p.is_absolute():
-        p = REPO_ROOT / p
+        p = base / p
     return p
 
 
 def load_config(env_file: Optional[Path] = None) -> Config:
     """Load configuration from environment + .env file.
 
+    An explicit ``env_file`` argument is honored verbatim (no discovery),
+    which keeps tests hermetic. Otherwise :func:`find_env_file` searches
+    cwd, then the dev checkout root.
+
     Does NOT validate that OAuth credentials are present; commands that need
     them call :meth:`Config.require_oauth_app` themselves so e.g. ``auth login``
     can run with a missing client_id (and print the walkthrough).
     """
-    path = env_file or DEFAULT_ENV_FILE
-    if path.exists():
+    if env_file is not None:
+        path: Optional[Path] = env_file if env_file.exists() else None
+    else:
+        path = find_env_file()
+    if path is not None:
         load_dotenv(path, override=False)
+    env_dir = path.parent if path is not None else None
 
     return Config(
         client_id=_clean(os.environ.get("FRAMEIO_CLIENT_ID")),
         client_secret=_clean(os.environ.get("FRAMEIO_CLIENT_SECRET")),
         redirect_uri=os.environ.get("FRAMEIO_REDIRECT_URI") or DEFAULT_REDIRECT_URI,
         scopes=_split_scopes(os.environ.get("FRAMEIO_SCOPES") or DEFAULT_SCOPES),
-        token_file=_resolve_token_path(os.environ.get("FRAMEIO_TOKEN_FILE") or DEFAULT_TOKEN_FILE),
+        token_file=_resolve_token_path(os.environ.get("FRAMEIO_TOKEN_FILE"), env_dir),
         api_base=(os.environ.get("FRAMEIO_API_BASE") or DEFAULT_API_BASE).rstrip("/"),
         default_account_id=_clean(os.environ.get("FRAMEIO_ACCOUNT_ID")),
         default_workspace_id=_clean(os.environ.get("FRAMEIO_WORKSPACE_ID")),
@@ -125,9 +161,11 @@ def write_env_values(updates: dict[str, str], env_file: Optional[Path] = None) -
     """Update or append KEY=VALUE lines in .env, preserving comments and order.
 
     Used by the ``auth login`` wizard when the user pastes their client_id /
-    client_secret. Lines are NOT logged or echoed elsewhere.
+    client_secret. Lines are NOT logged or echoed elsewhere. Targets the
+    discovered .env, or creates one in the current working directory —
+    never inside the installed package (site-packages).
     """
-    path = env_file or DEFAULT_ENV_FILE
+    path = env_file or find_env_file() or (Path.cwd() / ".env")
     if not path.exists():
         example = REPO_ROOT / ".env.example"
         path.write_text(example.read_text(encoding="utf-8") if example.exists() else "", encoding="utf-8")

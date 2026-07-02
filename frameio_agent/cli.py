@@ -32,7 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="frameio-agent",
         description=(
-            "Give your coding agent safe, read-only access to your Frame.io projects. "
+            "Run Frame.io from your coding agent. Read-only by default; mutations "
+            "(share create, refs add) are confirmation-gated. "
             "Run `frameio-agent auth login` first."
         ),
     )
@@ -45,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     auth_login = auth_sub.add_parser(
         "login",
-        help="Guided Adobe IMS OAuth wizard (PKCE + loopback). Walks first-timers through Adobe Developer Console setup.",
+        help="Guided Adobe IMS OAuth wizard (PKCE; captures the redirect from your clipboard automatically). Walks first-timers through Adobe Developer Console setup.",
     )
     auth_login.add_argument("--port", type=int, default=None, help="Loopback port (default: from FRAMEIO_REDIRECT_URI).")
     auth_login.add_argument("--no-browser", action="store_true", help="Print the authorize URL instead of opening a browser.")
@@ -158,8 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
     refs_add.add_argument("--yes", action="store_true", help="Skip the y/N confirmation.")
     _add_json_flag(refs_add)
 
-    # share (the one mutation — gated by confirmation; see PRD §11.8)
-    share = sub.add_parser("share", help="Create a Frame.io review share (the only mutation in v1).")
+    # share (confirmation-gated mutation; see PRD §11.8)
+    share = sub.add_parser("share", help="Create a Frame.io review share (confirmation-gated).")
     share_sub = share.add_subparsers(dest="share_command", metavar="<subcommand>")
     share_create = share_sub.add_parser(
         "create",
@@ -210,10 +211,33 @@ def build_parser() -> argparse.ArgumentParser:
     # mcp (optional layer)
     sub.add_parser("mcp", help="Run as an MCP server (optional; CLI works without it).")
 
+    # Keep subparser references so main() can print group help WITHOUT the
+    # SystemExit(0) that argparse's --help action raises (a bare
+    # `frameio-agent frames` must exit 2, not 0).
+    parser._group_parsers = {"auth": auth, "frames": frames, "refs": refs, "share": share}  # type: ignore[attr-defined]
     return parser
 
 
+def _group_help(parser: argparse.ArgumentParser, command: str) -> int:
+    """Print a command group's help and exit nonzero (missing subcommand)."""
+    group = getattr(parser, "_group_parsers", {}).get(command)
+    if group is not None:
+        group.print_help(sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles fall back to legacy codepages (cp1252/cp437) when
+    # output is piped or redirected; API-derived text (comments, file names,
+    # author names) is arbitrary Unicode. Degrade unencodable characters
+    # instead of crashing with UnicodeEncodeError.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except (ValueError, OSError):  # pragma: no cover - closed/odd streams
+                pass
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -230,8 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.auth_command == "status":
                 from .auth import cmd_status
                 return cmd_status(as_json=args.json, emit=_emit)
-            parser.parse_args(["auth", "--help"])
-            return 2
+            return _group_help(parser, "auth")
 
         if args.command == "verify":
             from .listing import cmd_verify
@@ -279,8 +302,7 @@ def main(argv: list[str] | None = None) -> int:
                     as_json=args.json,
                     emit=_emit,
                 )
-            parser.parse_args(["frames", "--help"])
-            return 2
+            return _group_help(parser, "frames")
 
         if args.command == "contact-sheet":
             from .contact_sheet import cmd_contact_sheet
@@ -313,8 +335,7 @@ def main(argv: list[str] | None = None) -> int:
                     as_json=args.json,
                     emit=_emit,
                 )
-            parser.parse_args(["refs", "--help"])
-            return 2
+            return _group_help(parser, "refs")
 
         if args.command == "share":
             if args.share_command == "create":
@@ -333,15 +354,14 @@ def main(argv: list[str] | None = None) -> int:
                     reviewers=args.reviewers,
                     message=args.message,
                 )
-            parser.parse_args(["share", "--help"])
-            return 2
+            return _group_help(parser, "share")
 
         if args.command == "mcp":
             try:
                 from .optional.mcp_server import run as mcp_run
             except ModuleNotFoundError:
                 print(
-                    "MCP server module not installed. Run: pip install '.[mcp]'",
+                    'MCP server module not installed. Run: pip install "frameio-agent[mcp]"',
                     file=sys.stderr,
                 )
                 return 2

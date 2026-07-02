@@ -87,8 +87,10 @@ class TokenCache:
     ) -> "TokenCache":
         now = time.time()
         expires_in = float(body.get("expires_in") or 0)
-        # IMS sometimes returns expires_in in milliseconds; normalize.
-        if expires_in > 10_000_000:  # >115 days = definitely ms
+        # IMS sometimes returns expires_in in milliseconds; normalize. Real
+        # access tokens live minutes-to-hours, so anything over 7 days is
+        # milliseconds (e.g. a 1h token arriving as 3_600_000).
+        if expires_in > 604_800:  # 7 days in seconds
             expires_in /= 1000.0
         return cls(
             access_token=body["access_token"],
@@ -103,12 +105,25 @@ class TokenCache:
 
 
 def _save_token_cache(cache: TokenCache, path: Path) -> None:
+    """Write the token cache atomically with owner-only permissions.
+
+    The file is created 0600 from the first byte (no world-readable window)
+    and swapped into place with os.replace, so a concurrent reader never
+    sees a truncated JSON. Windows ignores the POSIX mode bits, as before.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(cache.to_json(), encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.chmod(path, 0o600)  # POSIX only; no-op on Windows
-    except (OSError, NotImplementedError):
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(cache.to_json())
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    os.replace(tmp, path)
 
 
 def load_tokens(cfg: Config) -> Optional[TokenCache]:
@@ -161,16 +176,36 @@ def _refresh_tokens(cfg: Config, cache: TokenCache) -> TokenCache:
     return refreshed
 
 
-def get_access_token(cfg: Config) -> tuple[str, TokenCache]:
-    """Return a usable access token, refreshing on the fly if needed."""
+# Serializes token refresh across ThreadPoolExecutor workers (frames pull,
+# contact-sheet) and concurrent MCP tool calls, so only one refresh_token
+# grant hits IMS and only one writer touches tokens.json at a time.
+_refresh_lock = threading.Lock()
+
+
+def get_access_token(cfg: Config, *, force_refresh: bool = False) -> tuple[str, TokenCache]:
+    """Return a usable access token, refreshing on the fly if needed.
+
+    ``force_refresh=True`` refreshes even when the local expiry looks fine —
+    used by the HTTP client when Frame.io answers 401 for a token we thought
+    was valid (server-side revocation, password change, clock skew).
+    """
     cache = load_tokens(cfg)
     if cache is None:
         raise AuthError(
             "Frame.io is not authenticated.",
             remediation="Run: frameio-agent auth login",
         )
-    if cache.is_expired():
-        cache = _refresh_tokens(cfg, cache)
+    if force_refresh or cache.is_expired():
+        before = cache.obtained_at
+        with _refresh_lock:
+            # Another thread may have refreshed while we waited on the lock.
+            latest = load_tokens(cfg) or cache
+            if latest.obtained_at > before:
+                cache = latest  # fresh enough — reuse it
+            elif force_refresh or latest.is_expired():
+                cache = _refresh_tokens(cfg, latest)
+            else:
+                cache = latest
     return cache.access_token, cache
 
 
@@ -303,8 +338,10 @@ the Adobe Developer Console:
   2. Add the Frame.io API: "+ Add to Project" -> "API" -> search "Frame.io"
      -> select "Frame.io API" -> Next.
 
-  3. Pick credential type "OAuth Web App". Set the redirect URI to:
+  3. Pick credential type "OAuth Web App". Register the redirect URI as:
          {redirect_uri}
+     (Adobe requires an HTTPS redirect; the login flow captures the code
+      from your clipboard, so no local server is needed.)
 
   4. Open the new "OAuth Web App" card in the sidebar and copy the
      Client ID + Client Secret. Paste them at the prompts below.
@@ -478,7 +515,9 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: b
     redirect_uri = cfg.redirect_uri
     if port and port != cfg.loopback_port:
         parts = urlsplit(cfg.redirect_uri)
-        redirect_uri = parts._replace(netloc=f"127.0.0.1:{port}").geturl()
+        # Preserve the registered hostname — Adobe matches the redirect URI
+        # exactly, so rewriting localhost to 127.0.0.1 would break the match.
+        redirect_uri = parts._replace(netloc=f"{parts.hostname}:{port}").geturl()
     expected_path = urlsplit(redirect_uri).path or "/callback"
 
     # Auto-switch to manual mode when the redirect URI cannot host an

@@ -16,9 +16,9 @@ from typing import Any, Callable, Optional
 
 from . import api
 from .client import FrameioClient
-from .comments import _resolve_account_for_file  # account-resolution helper
+from .comments import find_file  # locates a file across visible accounts
 from .config import load_config
-from .errors import AuthError, FrameioAgentError
+from .errors import FrameioAgentError
 
 
 def build_payload(
@@ -183,9 +183,9 @@ def cmd_share_create(
     cfg = load_config()
     try:
         with FrameioClient(cfg) as client:
-            account_id = _resolve_account_for_file(client, file_ids[0])
-            # V4 shares are project-scoped — resolve project_id from the first file.
-            file_meta = api.get_file(client, account_id, file_ids[0])
+            # V4 shares are project-scoped — locate the first file (probing
+            # all visible accounts) and take its project_id.
+            account_id, file_meta = find_file(client, cfg, file_ids[0])
             project_id = file_meta.get("project_id")
             if not project_id:
                 raise FrameioAgentError(
@@ -193,20 +193,9 @@ def cmd_share_create(
                     remediation="Verify the file_id with `latest` or `search`.",
                 )
             raw = api.create_share(client, account_id, project_id, payload)
-    except AuthError as e:
-        # Hint at scope issues, which are the most likely failure mode for write.
-        rendered = e.render()
-        if "scope" in rendered.lower() or "insufficient" in rendered.lower():
-            print(
-                "Error: Frame.io rejected the share request (insufficient OAuth scope).",
-                file=sys.stderr,
-            )
-            print("  > Run: frameio-agent auth login", file=sys.stderr)
-            return 1
-        print(f"Error: {rendered}", file=sys.stderr)
-        return 1
     except FrameioAgentError as e:
         rendered = e.render()
+        lowered = rendered.lower()
         if "feature(s) not included in plan" in rendered:
             # Surface Frame.io plan limitations clearly. The plan-gated feature
             # name is in the error (e.g. "secure_sharing").
@@ -220,6 +209,14 @@ def cmd_share_create(
                 file=sys.stderr,
             )
             return 1
+        if "scope" in lowered or "insufficient" in lowered:
+            # API-side scope rejections arrive as ApiError (a FrameioAgentError).
+            print(
+                "Error: Frame.io rejected the share request (insufficient OAuth scope).",
+                file=sys.stderr,
+            )
+            print("  > Run: frameio-agent auth login", file=sys.stderr)
+            return 1
         print(f"Error: {rendered}", file=sys.stderr)
         return 1
 
@@ -230,7 +227,7 @@ def cmd_share_create(
     if reviewer_emails and normalized.get("share_id"):
         try:
             with FrameioClient(cfg) as client:
-                account_id = _resolve_account_for_file(client, file_ids[0])
+                # account_id was resolved during share creation above.
                 api.add_reviewers_to_share(
                     client, account_id, normalized["share_id"],
                     emails=reviewer_emails, message=message,

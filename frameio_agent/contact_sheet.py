@@ -164,25 +164,29 @@ def _collect_online(
         if not files:
             return []
         print(f"  Found {len(files)} file(s). Fetching thumbnail URLs...")
-        entries: list[dict[str, Any]] = []
+        # Key futures by collection index so results keep BFS order — with
+        # as_completed alone, tile order (and --index numbering) would
+        # shuffle between runs based on download completion order.
+        indexed: list[tuple[int, dict[str, Any]]] = []
         with ThreadPoolExecutor(max_workers=parallel) as pool:
             futs = {
-                pool.submit(media.fetch_thumb, client, account_id, f.get("id")): f
-                for f in files if f.get("id")
+                pool.submit(media.fetch_thumb, client, account_id, f.get("id")): (i, f)
+                for i, f in enumerate(files) if f.get("id")
             }
             for fut in as_completed(futs):
-                f = futs[fut]
+                i, f = futs[fut]
                 try:
                     fid, name, url = fut.result()
                 except Exception:
                     continue
                 if url:
-                    entries.append({
+                    indexed.append((i, {
                         "file_id": fid,
                         "name": f.get("_display_name") or name or f.get("name") or "(unnamed)",
                         "url": url,
-                    })
-        return entries
+                    }))
+        indexed.sort(key=lambda pair: pair[0])
+        return [entry for _i, entry in indexed]
 
 
 def cmd_contact_sheet(
@@ -206,7 +210,7 @@ def cmd_contact_sheet(
         from PIL import Image  # noqa: F401
     except ImportError:
         print("Error: Pillow is required for `contact-sheet`.", file=sys.stderr)
-        print("  > Install with: pip install '.[images]'", file=sys.stderr)
+        print('  > Install with: pip install "frameio-agent[images]"', file=sys.stderr)
         return 2
 
     if not (project or folder or from_manifest):

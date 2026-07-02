@@ -37,9 +37,14 @@ class TestLoadConfig:
         cfg = load_config(env_file=tmp_path / "missing.env")
         assert cfg.client_id is None
         assert cfg.client_secret is None
-        assert cfg.redirect_uri == "http://localhost:8722/callback"
+        # Adobe Web App OAuth requires an HTTPS redirect; https://localhost
+        # is the registered default the clipboard-capture flow expects.
+        assert cfg.redirect_uri == "https://localhost"
         assert cfg.api_base == "https://api.frame.io/v4"
-        assert cfg.loopback_port == 8722
+        assert cfg.loopback_port == 443
+        # With no .env, secrets anchor to the user's home — never to the
+        # installed package directory (site-packages under pip install).
+        assert cfg.token_file == Path.home() / ".frameio-agent" / "tokens.json"
 
     def test_reads_values_from_env_file(self, tmp_path: Path) -> None:
         env = _write_env(
@@ -70,11 +75,13 @@ class TestLoadConfig:
         cfg = load_config(env_file=env)
         assert cfg.scopes == ("openid", "profile", "offline_access")
 
-    def test_token_file_relative_resolves_under_repo(self, tmp_path: Path) -> None:
+    def test_token_file_relative_resolves_under_env_dir(self, tmp_path: Path) -> None:
+        # Relative token paths anchor to the loaded .env's directory, so a
+        # dev checkout keeps its cache local while installed usage goes home.
         env = _write_env(tmp_path, "FRAMEIO_TOKEN_FILE=.frameio-agent/tokens.json\n")
         cfg = load_config(env_file=env)
         assert cfg.token_file.is_absolute()
-        assert cfg.token_file.name == "tokens.json"
+        assert cfg.token_file == tmp_path / ".frameio-agent" / "tokens.json"
 
     def test_token_file_absolute_preserved(self, tmp_path: Path) -> None:
         abs_target = tmp_path / "abs_tokens.json"

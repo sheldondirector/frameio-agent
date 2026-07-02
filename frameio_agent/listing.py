@@ -197,8 +197,10 @@ def cmd_latest(
         print(f"Latest in project {project}:")
         for i, item in enumerate(items, 1):
             updated = item.get("updated_at") or "?"
-            count = item.get("comments_count") or 0
-            print(f"  {i}. {item['name']}  (updated {updated}, {count} comments)")
+            count = item.get("comments_count")
+            # V4 listing endpoints don't return comment counts; don't fake a 0.
+            count_str = f"{count} comments" if count is not None else "comments: n/a"
+            print(f"  {i}. {item['name']}  (updated {updated}, {count_str})")
             print(f"     file_id: {item['file_id']}")
         print()
         print("Tip: frameio-agent comments <file_id> --json")

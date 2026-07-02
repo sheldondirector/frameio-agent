@@ -6,7 +6,7 @@
 
 Your agent can find your latest cut, summarize the director's notes with timecodes, pull a YouTube reference straight into a project folder, build a contact sheet from your last shoot, and send a curated review link to a client — all without opening Frame.io.
 
-10-minute setup. Works with **Claude Code**, **Cursor**, **OpenAI Codex CLI**, **Gemini CLI**, or any agent that runs local commands. MCP optional. Read-only by default; every mutation (upload, share, comment) is confirmation-gated.
+10-minute setup. Works with **Claude Code**, **Cursor**, **OpenAI Codex CLI**, **Gemini CLI**, or any agent that runs local commands. MCP optional. Read-only by default; every mutation (upload, share) is confirmation-gated.
 
 > *Unofficial community tool. Not affiliated with, endorsed by, or supported by Adobe or Frame.io. "Frame.io" is a trademark of Adobe.*
 
@@ -69,24 +69,26 @@ python -m frameio_agent.cli comments <file_id> --json
 
 ## Security
 
-- **Read-only by default; every mutation is opt-in and confirmation-gated.** Share creation, reference uploads, comment posts — all require y/N (or an explicit `--yes` the user authorized). No silent writes ever.
+- **Read-only by default; every mutation is opt-in and confirmation-gated.** Share creation and reference uploads both require y/N (or an explicit `--yes` the user authorized). No silent writes ever. (Comment *posting* is not shipped; `comments` is read-only.)
 - **Delete / rename / move / permission-change are still NOT in scope.** Even the agent can't accidentally trash your project hierarchy. Those endpoints exist in V4; the CLI just doesn't call them.
 - **Secrets stay local.** `.env` and `~/.frameio-agent/tokens.json` are git-ignored. The CLI redacts token-like values from any output. Share passwords are never echoed.
 - **Bring your own credentials.** The wizard helps you create an Adobe Developer Console OAuth Web App; nothing is ever sent to the maintainers.
 
 ## Optional: MCP
 
-If your agent supports MCP, run `frameio-agent mcp` to expose the same operations as MCP tools. The CLI is the spine — MCP is a thin wrapper.
+If your agent supports MCP, run `frameio-agent mcp` to expose the core read operations (auth status, projects, latest, comments) as MCP tools. The CLI is the spine and carries the full command surface — MCP is a thin, read-only wrapper.
 
 ## Troubleshooting
 
-| If you see | Run |
+| If you see | Do |
 |---|---|
-| `Missing FRAMEIO_CLIENT_ID` | `frameio-agent auth login` |
-| `Frame.io is not authenticated` | `frameio-agent auth login` |
-| `Your Frame.io session expired` | `frameio-agent auth login` |
-| `Found multiple accounts` | Re-run with `--account <id>` |
-| `Traversal cap reached` | Use `latest` instead, or pass `--folder <id>` |
+| `Missing FRAMEIO_CLIENT_ID` | Run `frameio-agent auth login` |
+| `Frame.io is not authenticated` | Run `frameio-agent auth login` |
+| `Your Frame.io session expired` | Run `frameio-agent auth login` |
+| `Could not resolve an account_id` | Set `FRAMEIO_ACCOUNT_ID` in `.env` (find it via `projects --json`) |
+| `Warning: collection cap reached` | Re-run with a higher `--max-files` |
+| `yt-dlp is not installed` | `pip install "frameio-agent[youtube]"` |
+| `Pillow is required` | `pip install "frameio-agent[images]"` |
 
 ## License
 

@@ -15,7 +15,17 @@ REPO = Path(__file__).resolve().parents[1]
 
 def install_deps() -> None:
     print("Installing dependencies (this may take a moment)...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", str(REPO)])
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", str(REPO)])
+    except subprocess.CalledProcessError as e:
+        print(f"\npip install failed (exit {e.returncode}).", file=sys.stderr)
+        print(
+            "  > Editable installs of pyproject-only packages need pip >= 21.3.\n"
+            f"  > Try: {sys.executable} -m pip install --upgrade pip\n"
+            "  > Then re-run: python scripts/setup.py",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def ensure_env_file() -> None:

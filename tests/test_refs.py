@@ -46,6 +46,15 @@ class TestDetectMode:
         assert refs._detect_mode("./file.mp4", None) == "local"
         assert refs._detect_mode("C:\\Users\\me\\file.mp4", None) == "local"
 
+    def test_w_prefixed_hosts_not_mangled(self) -> None:
+        # Regression: lstrip("www.") strips a CHARACTER SET, so wwx.com
+        # became x.com (-> yt_dlp) and wetransfer.com became etransfer.com.
+        assert refs._detect_mode("https://wwx.com/file.mp4", None) == "remote_upload"
+        assert refs._detect_mode("https://www.wetransfer.com/f.mp4", None) == "remote_upload"
+        assert refs._detect_mode("https://wx.com/f.mp4", None) == "remote_upload"
+        # And the real x.com still routes to yt-dlp, with or without www.
+        assert refs._detect_mode("https://www.x.com/foo/status/1", None) == "yt_dlp"
+
     def test_via_override(self) -> None:
         assert refs._detect_mode("https://youtube.com/watch?v=x", "remote_upload") == "remote_upload"
         assert refs._detect_mode("/tmp/file.mp4", "yt_dlp") == "yt_dlp"

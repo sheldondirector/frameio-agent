@@ -76,7 +76,7 @@ The first useful experience should feel like:
 ## 5. Product principles
 
 1. **CLI first, MCP optional.** Every useful operation works through local commands before MCP exists.
-2. **Read-only by default, with exactly one explicit mutation.** Read-only is the resting state. The single mutation — `share create` (§11.8) — is gated by a confirmation prompt and requires the user to opt into a `--yes` bypass. No upload, delete, move, rename, or permission change. No share modification or revocation. Period.
+2. **Read-only by default; every mutation confirmation-gated.** Read-only is the resting state. The shipped mutations — `share create` (+ optional reviewer invites, §11.8) and `refs add` (upload a local file / remote URL / yt-dlp ingest into a folder) — are each gated by a confirmation prompt with a `--yes` bypass the user must opt into. No delete, move, rename, or permission change. No share modification or revocation. Period.
 3. **Agent-readable by design.** Every command supports `--json` and clear exit codes.
 4. **No secrets in output.** Tokens and auth codes redacted by default.
 5. **Beginner-safe errors.** Every failure tells the user/agent exactly what to run next.
@@ -136,7 +136,7 @@ frameio-agent comments <file_id> --json          # pull the notes (text + timeco
 
 ### Out of scope for v1 (hard no)
 
-Uploading · deleting · moving/renaming · permission changes · **modifying or revoking existing shares** · **listing existing shares** (deferred to v1.2) · bulk downloads · browser/GraphQL scraping fallbacks · any non-Frame.io service · any local media processing/editing/cataloging · required MCP · hosted SaaS or remote token storage. **Note: `share create` is the only mutation in v1 — adding any other mutation, even a sibling like `share revoke`, is out of scope and requires a PRD update first.**
+Deleting · moving/renaming · permission changes · **modifying or revoking existing shares** · **listing existing shares** (deferred) · bulk downloads · browser/GraphQL scraping fallbacks · non-Frame.io services beyond ingestion feeders (yt-dlp exists solely to feed uploads into Frame.io) · local media processing/editing/cataloging beyond contact-sheet compositing · required MCP · hosted SaaS or remote token storage. **Note: the mutations in v1 are exactly `share create` (+ reviewer invites) and `refs add` uploads — adding any other mutation, even a sibling like `share revoke`, requires a PRD update first.**
 
 ---
 
@@ -445,7 +445,7 @@ frameio-agent-starter/
 
 **Secret handling.** Never print raw env values for keys containing `TOKEN`, `SECRET`, `KEY`, `CODE`, `AUTH`. Redact URL query params named `code`, `access_token`, `refresh_token`, `client_secret`, `Signature`, `X-Amz-Signature`. Token file gets private perms where the OS supports it.
 
-**Bounded-write default.** v1 must not mutate Frame.io state except: (a) OAuth token refresh, (b) local token cache writes, and (c) **the single `share create` POST** described in §11.8, which is guarded by an interactive prompt and the `--yes` bypass policy. Allowed read calls: user/account/workspace/project/folder/file list+show, comments list, share-creation POST. Disallowed in v1: upload, delete, move, rename, permission changes, share modification, share revocation, share listing.
+**Bounded-write default.** v1 must not mutate Frame.io state except: (a) OAuth token refresh, (b) local token cache writes, (c) **the `share create` POST** (+ reviewer-invite POST) described in §11.8, and (d) **the `refs add` upload POSTs** (local_upload chunk PUTs / remote_upload) — each guarded by an interactive prompt and the `--yes` bypass policy. Allowed read calls: user/account/workspace/project/folder/file list+show, comments list, account search, thumbnail downloads. Disallowed in v1: delete, move, rename, permission changes, share modification, share revocation, share listing.
 
 ---
 
@@ -543,7 +543,7 @@ Do not print secrets. Prefer --json when parsing.
 - **v0.4** — optional MCP wrapper mirroring the CLI (including `frameio_create_share` with `confirm:true` gate); example configs for Claude Code / Cursor.
 - **v0.5** — polished README + success GIF (both moments: see-comments AND send-share); tested against ≥ 2 agents; `pipx` / `uvx` packaging.
 - **v1.0** — public beginner release: read + the single share-create mutation, unaffiliated disclaimer.
-- **Later (separate, opt-in, explicit confirmation each):** v1.2 may add `share list` + `share revoke` (still mutations on shares only, never on assets). *Upload, delete, rename, move, permission changes, and any non-Frame.io ingestion (YouTube, etc.) remain out of this product's identity and should be a different repo if ever built.*
+- **Later (separate, opt-in, explicit confirmation each):** `share list` + `share revoke` (still mutations on shares only, never on assets); ffmpeg per-frame scrubbing for the vision loop (issue #4). *Delete, rename, move, and permission changes remain out of this product's identity and should be a different repo if ever built. Upload (`refs add`) and YouTube ingestion shipped in v0.4 as confirmation-gated ingestion feeders.*
 
 ---
 
@@ -586,4 +586,4 @@ The two wins v1 must nail (and only these two):
    find the assets → share create --name "..." [files...] → review URL
    ```
 
-Everything in this repo serves those two sentences. Anything else — uploads, deletes, permission edits, YouTube ingestion, share management, automation orchestration — is out of scope and belongs in a different repo.
+Everything in this repo serves those wins (plus their ingestion feeders: `refs add` uploads and the vision loop's frame pulls). Anything else — deletes, renames, moves, permission edits, share management, automation orchestration — is out of scope and belongs in a different repo.

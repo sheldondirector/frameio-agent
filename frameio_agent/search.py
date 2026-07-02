@@ -109,7 +109,7 @@ def cmd_search(
     else:
         if not results:
             print(f"No matches for '{query}' (engine={engine}).")
-            print("  > Try a different engine (--nlp or --lexical), or broaden the query.")
+            print("  > Try a different engine (--nlp or --engine lexical), or broaden the query.")
             return 0
         print(f"Matches for '{query}' (engine={engine}, {len(results)} shown):")
         for r in results:

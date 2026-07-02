@@ -14,6 +14,7 @@ it here and downstream callers stay untouched. The logical surface is:
 """
 from __future__ import annotations
 
+import sys
 from typing import Any, Iterator, Optional
 
 from .client import FrameioClient
@@ -164,6 +165,12 @@ def _recent_via_traversal(
             if _passes_media_filter(child, media_type):
                 files.append(child)
 
+    if queue and (seen_folders >= max_folders or seen_assets >= max_assets):
+        print(
+            f"Warning: traversal cap reached ({seen_folders} folders / {seen_assets} assets scanned); "
+            "results may be partial.",
+            file=sys.stderr,
+        )
     files.sort(key=lambda f: f.get("updated_at") or "", reverse=True)
     return files[:limit]
 

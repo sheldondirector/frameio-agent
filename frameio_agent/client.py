@@ -22,7 +22,28 @@ import httpx
 from .auth import get_access_token
 from .config import Config
 from .errors import ApiError
-from .redact import redact_url, safe_format_exception
+from .redact import redact_url, redact_value, safe_format_exception
+
+
+def _parse_retry_after(value: str) -> float:
+    """Parse a Retry-After header: either delta-seconds or an HTTP-date.
+
+    RFC 9110 allows both forms; a bare float() on the date form raised an
+    uncaught ValueError. Unparseable values fall back to 0 (use backoff).
+    """
+    value = (value or "").strip()
+    if not value:
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(value)
+        return max(0.0, dt.timestamp() - time.time())
+    except (TypeError, ValueError):
+        return 0.0
 
 
 DEFAULT_TIMEOUT = 30.0
@@ -37,6 +58,7 @@ class FrameioClient:
         self.cfg = cfg
         self._http = httpx.Client(timeout=DEFAULT_TIMEOUT, follow_redirects=True)
         self._cached_token: Optional[str] = None
+        self._force_refresh = False  # set by the 401 handler, consumed once
 
     def close(self) -> None:
         self._http.close()
@@ -51,9 +73,10 @@ class FrameioClient:
 
     def _headers(self) -> dict[str, str]:
         token = self._cached_token
-        if token is None:
-            token, _ = get_access_token(self.cfg)
+        if token is None or self._force_refresh:
+            token, _ = get_access_token(self.cfg, force_refresh=self._force_refresh)
             self._cached_token = token
+            self._force_refresh = False
         return {
             "Authorization": f"Bearer {token}",
             "x-api-key": self.cfg.client_id or "",
@@ -91,6 +114,7 @@ class FrameioClient:
         """Issue one request with retry + token-refresh handling. Returns parsed JSON."""
         url = self._absolute(path_or_url)
         last_error: Optional[str] = None
+        refreshed_after_401 = False
         for attempt in range(MAX_RETRIES + 1):
             try:
                 resp = self._http.request(
@@ -107,18 +131,22 @@ class FrameioClient:
                 ) from None
 
             if resp.status_code == 401:
-                # Token may be stale; force a refresh and retry once.
+                # Force a real refresh_token grant on the retry — the local
+                # expiry can look fine while IMS has revoked the token
+                # server-side (password change, re-login elsewhere).
                 self._cached_token = None
-                if attempt < MAX_RETRIES:
+                if not refreshed_after_401 and attempt < MAX_RETRIES:
+                    self._force_refresh = True
+                    refreshed_after_401 = True
                     continue
                 raise ApiError(
-                    "Frame.io rejected the access token (HTTP 401).",
+                    "Frame.io rejected the access token (HTTP 401), even after a refresh.",
                     remediation="Run: frameio-agent auth login",
                 )
 
             if resp.status_code in (429,) or 500 <= resp.status_code < 600:
                 if attempt < MAX_RETRIES:
-                    retry_after = float(resp.headers.get("Retry-After", "0") or 0)
+                    retry_after = _parse_retry_after(resp.headers.get("Retry-After", ""))
                     time.sleep(max(retry_after, BACKOFF_BASE * (2 ** attempt)))
                     continue
 
@@ -133,12 +161,18 @@ class FrameioClient:
                         remediation="Re-run with the latest version, or report a bug.",
                     )
 
-            # Non-recoverable error path.
+            # Non-recoverable error path. Redact the detail — API error
+            # bodies can echo request context (signed URLs, tokens).
             try:
                 body = resp.json()
                 detail = body.get("message") or body.get("error") or body.get("detail") or ""
+                if isinstance(body.get("errors"), list) and not detail:
+                    detail = "; ".join(
+                        str(e.get("detail") or e.get("title") or "") for e in body["errors"] if isinstance(e, dict)
+                    ).strip("; ")
             except ValueError:
                 detail = (resp.text or "").strip()[:300]
+            detail = redact_value(str(detail)) if detail else ""
             raise ApiError(
                 f"Frame.io API error {resp.status_code} on {method} {redact_url(url)}"
                 + (f": {detail}" if detail else ""),

@@ -51,9 +51,8 @@ def _looks_like_url(source: str) -> bool:
 
 def _needs_yt_dlp(url: str) -> bool:
     """True if the URL host is a known streaming service that needs yt-dlp."""
-    host = (urlsplit(url).hostname or "").lower().lstrip("www.")
-    if host.startswith("www."):
-        host = host[4:]
+    host = (urlsplit(url).hostname or "").lower()
+    host = host.removeprefix("www.")  # NOT lstrip: that strips a char set and mangles e.g. wwx.com
     return any(host == h or host.endswith("." + h) for h in YT_DLP_HOSTS)
 
 
@@ -116,18 +115,36 @@ def _prompt_confirm() -> bool:
     return answer in ("y", "yes")
 
 
+def _yt_dlp_invocation() -> Optional[list[str]]:
+    """How to run yt-dlp on this machine, or None if unavailable.
+
+    Prefers running it as a module of the current interpreter — that's where
+    `pip install "frameio-agent[youtube]"` puts it, and the venv's bin/Scripts
+    dir is often NOT on PATH when the CLI is invoked by absolute path.
+    Falls back to a standalone `yt-dlp` binary on PATH.
+    """
+    import importlib.util
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    exe = shutil.which("yt-dlp")
+    if exe:
+        return [exe]
+    return None
+
+
 def _run_yt_dlp(source: str, dest_dir: Path) -> Path:
     """Download `source` via yt-dlp into dest_dir. Returns the downloaded file path."""
-    if shutil.which("yt-dlp") is None:
+    invocation = _yt_dlp_invocation()
+    if invocation is None:
         raise FrameioAgentError(
-            "yt-dlp is not on PATH.",
-            remediation="Install with: pip install '.[youtube]'  (or: pip install yt-dlp)",
+            "yt-dlp is not installed.",
+            remediation='Install with: pip install "frameio-agent[youtube]"  (or: pip install yt-dlp)',
         )
 
     # Ask yt-dlp to print the final filepath after the download succeeds.
     # %(filepath)s is yt-dlp's post-processing placeholder for the local file.
     cmd = [
-        "yt-dlp",
+        *invocation,
         "--no-progress",
         "--no-warnings",
         "--restrict-filenames",

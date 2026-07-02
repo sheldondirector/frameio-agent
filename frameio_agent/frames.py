@@ -87,20 +87,22 @@ def cmd_frames_pull(
                 return 0
             print(f"  Found {len(files)} file(s). Resolving frame URLs...")
 
-            # Resolve thumbnail URLs in parallel.
-            resolved: list[tuple[dict[str, Any], Optional[str]]] = []
+            # Resolve thumbnail URLs in parallel, preserving collection
+            # order — frame numbering must be deterministic across runs.
+            slots: list[Optional[tuple[dict[str, Any], Optional[str]]]] = [None] * len(files)
             with ThreadPoolExecutor(max_workers=parallel) as pool:
                 futs = {
-                    pool.submit(media.fetch_thumb, client, account_id, f.get("id")): f
-                    for f in files if f.get("id")
+                    pool.submit(media.fetch_thumb, client, account_id, f.get("id")): (i, f)
+                    for i, f in enumerate(files) if f.get("id")
                 }
                 for fut in as_completed(futs):
-                    f = futs[fut]
+                    i, f = futs[fut]
                     try:
                         _, name, url = fut.result()
                     except Exception:
                         name, url = None, None
-                    resolved.append((f, url))
+                    slots[i] = (f, url)
+            resolved = [pair for pair in slots if pair is not None]
 
             # Download frame bytes in parallel and write to disk.
             print(f"  Downloading frames to {out_dir}/ ...")

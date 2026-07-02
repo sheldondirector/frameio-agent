@@ -22,11 +22,20 @@ def cmd_brief(*, project: str, as_json: bool, emit: Callable[[Any, bool], None])
             account_id = _resolve_account_for_project(client, project)
             project_meta = api.get_project(client, account_id, project)
             recent_raw = api.list_recent_files(client, account_id, project, limit=5)
+            recent = [_normalize_file(account_id, r) for r in recent_raw]
+            # V4 listing endpoints don't return comment counts — fetch the
+            # real numbers for the handful of recent assets so the
+            # "summarize the N comments" next-action is grounded in truth.
+            for r in recent:
+                if not r.get("file_id"):
+                    continue
+                try:
+                    r["comments_count"] = len(api.list_comments(client, account_id, r["file_id"]))
+                except FrameioAgentError:
+                    r["comments_count"] = None
     except FrameioAgentError as e:
         print(f"Error: {e.render()}", file=sys.stderr)
         return 1
-
-    recent = [_normalize_file(account_id, r) for r in recent_raw]
     needs_review = [r for r in recent if (r.get("comments_count") or 0) > 0]
 
     next_actions: list[str] = []

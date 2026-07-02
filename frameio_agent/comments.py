@@ -106,9 +106,7 @@ def cmd_comments(
     cfg = load_config()
     try:
         with FrameioClient(cfg) as client:
-            # File detail needs an account_id; resolve from default or by scanning.
-            account_id = _resolve_account_for_file(client, file_id)
-            file_meta = api.get_file(client, account_id, file_id)
+            account_id, file_meta = find_file(client, cfg, file_id)
             raw_comments = api.list_comments(client, account_id, file_id)
     except FrameioAgentError as e:
         print(f"Error: {e.render()}", file=sys.stderr)
@@ -144,22 +142,32 @@ def cmd_comments(
     return 0
 
 
-def _resolve_account_for_file(client: FrameioClient, file_id: str) -> str:
-    """Find the account_id for a file, preferring the configured default."""
-    cfg = load_config()
+def find_file(client: FrameioClient, cfg: Any, file_id: str) -> tuple[str, dict[str, Any]]:
+    """Locate a file across visible accounts. Returns (account_id, file_meta).
+
+    Tries the configured default account first, then probes every other
+    visible account — file endpoints are account-scoped, so a file that
+    lives under a non-default account would otherwise surface as a
+    misleading 404.
+    """
+    candidates: list[str] = []
     if cfg.default_account_id:
-        return cfg.default_account_id
-    # Fall back to first visible account — most users have just one.
-    accounts = api.list_accounts(client)
-    if not accounts:
+        candidates.append(cfg.default_account_id)
+    for acct in api.list_accounts(client):
+        acct_id = acct.get("id") or acct.get("account_id")
+        if acct_id and acct_id not in candidates:
+            candidates.append(acct_id)
+    if not candidates:
         raise FrameioAgentError(
             "No Frame.io accounts visible.",
             remediation="Run: frameio-agent verify",
         )
-    acct_id = accounts[0].get("id") or accounts[0].get("account_id")
-    if not acct_id:
-        raise FrameioAgentError(
-            "Could not resolve an account_id for this request.",
-            remediation="Set FRAMEIO_ACCOUNT_ID in .env.",
-        )
-    return acct_id
+    for acct_id in candidates:
+        try:
+            return acct_id, api.get_file(client, acct_id, file_id)
+        except FrameioAgentError:
+            continue
+    raise FrameioAgentError(
+        f"File {file_id} was not found under any visible account.",
+        remediation="Check the file_id with `latest` or `search`.",
+    )
