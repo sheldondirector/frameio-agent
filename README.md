@@ -74,6 +74,14 @@ python -m frameio_agent.cli comments <file_id> --json
 - **Secrets stay local.** `.env` and `~/.frameio-agent/tokens.json` are git-ignored. The CLI redacts token-like values from any output. Share passwords are never echoed.
 - **Bring your own credentials.** The wizard helps you create an Adobe Developer Console OAuth Web App; nothing is ever sent to the maintainers.
 
+## Which agents work with this?
+
+Any agent that can run local shell commands — the CLI has no LLM inside it, so the model is entirely your choice:
+
+- **Claude Code / Cursor / OpenAI Codex CLI / Gemini CLI** — paste the quick-start prompt above and go.
+- **OpenRouter-backed agents** (Aider, OpenHands, Cline, custom harnesses — any model on OpenRouter): same thing. The agent reads `AGENTS.md`, runs the commands, and does the summarizing/judging itself. For the vision workflows (`frames pull` → judge shots), pick a multimodal model.
+- **Agent-driven login:** agents shouldn't run the interactive `auth login`; they use the non-interactive pair — `auth start --json` (prints the sign-in URL) and `auth complete "<redirect-url>"` (you paste the URL from your browser back to the agent). Documented in `AGENTS.md`.
+
 ## Optional: MCP
 
 If your agent supports MCP, run `frameio-agent mcp` to expose the core read operations (auth status, projects, latest, comments) as MCP tools. The CLI is the spine and carries the full command surface — MCP is a thin, read-only wrapper.
