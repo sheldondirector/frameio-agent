@@ -60,7 +60,10 @@ python -m frameio_agent.cli comments <file_id> --json
 **Write (every one is confirmation-gated):**
 - **`share create <file_id> [<file_id>...] --name "..."`** — bundle assets into a Frame.io review share. Multi-asset, optional `--reviewers email@a.com,email@b.com`. Default visibility public; `--restricted` for signed-in only. Prompts y/N before sending; `--yes` to skip.
 - **`refs add <url-or-path> --folder <folder_id>`** — pull a YouTube/X URL via yt-dlp, or upload a local file, or trigger Frame.io's remote_upload for direct URLs Frame.io can fetch. One-stop reference ingestion.
-- **`contact-sheet --project <id> --out sheet.png`** — composite thumbnails from a project or folder into a single image grid.
+- **`contact-sheet --project <id> --out sheet.png`** — composite thumbnails from a project or folder into a single image grid. Filter with `--only`/`--exclude` file_id lists, number tiles with `--index`, or build offline from a `frames pull` manifest with `--from-manifest`.
+
+**Vision (give your agent eyes):**
+- **`frames pull --project <id> --out ./frames`** — download one preview frame per clip + a `manifest.json` mapping each image back to its `file_id`. Read-only; writes only local files. Your multimodal agent then *looks* at the frames, judges them ("this take has a C-stand in the back", "this shot is the keeper"), and drives the next command — `share create` with the selects, or `contact-sheet --from-manifest --exclude` with the rejects. The CLI never judges images itself, so this works with any agent that can read an image: Claude, GPT, Gemini, whatever you run.
 
 **Read-only by default.** Mutations only fire after explicit y/N confirmation (or `--yes` when the user has authorized the action in the current conversation).
 

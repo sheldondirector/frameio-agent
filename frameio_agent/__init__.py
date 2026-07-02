@@ -1,3 +1,3 @@
 """Frame.io Agent Starter — read-only Frame.io access for coding agents."""
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"

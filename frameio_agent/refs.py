@@ -134,6 +134,7 @@ def _run_yt_dlp(source: str, dest_dir: Path) -> Path:
         "-f", "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
         "-o", str(dest_dir / "%(title)s.%(ext)s"),
         "--print", "after_move:filepath",
+        "--",  # end of options: a source starting with '-' can't be parsed as a flag
         source,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)

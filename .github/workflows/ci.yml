@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + dev and image extras
+        run: pip install -e ".[dev,images]"
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+      - name: CLI smoke (no credentials)
+        shell: bash
+        run: |
+          # --help must work with zero config
+          python -m frameio_agent.cli --help
+          python -m frameio_agent.cli auth --help
+          python -m frameio_agent.cli share create --help
+          python -m frameio_agent.cli refs add --help
+          python -m frameio_agent.cli frames pull --help
+          python -m frameio_agent.cli contact-sheet --help
+          # unauthenticated status must exit 1 with a clean message, not crash
+          python -m frameio_agent.cli auth status --json && exit 1 || test $? -eq 1
+
+  windows-encoding:
+    name: cp1252 console safety
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e .
+      - name: Help output survives a cp1252 console
+        shell: pwsh
+        run: |
+          $env:PYTHONIOENCODING = "cp1252"
+          python -m frameio_agent.cli --help
+          python -m frameio_agent.cli search --help
+          python -m frameio_agent.cli comments --help
+          python -m frameio_agent.cli contact-sheet --help

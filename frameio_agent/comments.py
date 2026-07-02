@@ -130,7 +130,7 @@ def cmd_comments(
     if as_json:
         emit(payload, True)
     else:
-        print(f"{payload['file_name'] or file_id} — {len(normalized)} comments")
+        print(f"{payload['file_name'] or file_id} - {len(normalized)} comments")
         if payload["duration_seconds"]:
             print(f"  duration: {payload['duration_seconds']:.1f}s  fps: {fps:g}")
         print()

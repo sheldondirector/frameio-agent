@@ -12,10 +12,13 @@ You are helping the user run Frame.io from this local repo.
 - `comments <file_id>` — normalized review notes (text + timecode + author + thread)
 - `brief --project <id>` — one-paragraph project status
 
+**Vision (read-only; local file writes only):**
+- `frames pull --project|--folder <id> --out <dir>` — download one preview frame per clip + `manifest.json` mapping images to file_ids. Then YOU (the agent) Read the images, judge them, and drive the next command. The CLI never judges images.
+- `contact-sheet --project|--folder <id> --out X.png` — PIL composite of thumbnails. `--from-manifest <dir>` builds offline from a frames-pull output; `--only`/`--exclude` filter by file_id; `--index` numbers tiles + writes `<out>.index.json`.
+
 **Write (every one is confirmation-gated):**
 - `share create [file_ids...] --name "..."` — bundle assets into a review share. Optional `--reviewers a@x.com,b@y.com` adds email recipients.
 - `refs add <source> --folder <id>` — upload a local file, trigger a remote_upload from a direct URL, or yt-dlp from a streaming platform.
-- `contact-sheet --project|--folder <id> --out X.png` — PIL composite of project/folder thumbnails. (No Frame.io mutation; just downloads thumbnails.)
 
 For every mutation:
 - **Always show the confirmation summary the CLI prints, then wait for the user's y/N before sending.**
@@ -57,6 +60,9 @@ If the user asks for one of the above, explain it's out of scope (see PRD §scop
 - **Director-notes summary:** `latest --project <id>` → `comments <file_id>` → group by theme/timecode
 - **Reference pack from YouTube:** `refs add https://www.youtube.com/watch?v=... --folder <id>` (multiple times) — agent uses yt-dlp + local upload
 - **Contact sheet for the wall:** `contact-sheet --project <id> --out ~/Desktop/sheet.png`
+- **Visual select ("cut me a reel of shots that don't suck"):** `frames pull --project <id> --out ./frames` → Read each image in the manifest → judge → `share create <keeper file_ids> --name "Selects"`
+- **Filtered sheet ("minus every take with a C-stand"):** `frames pull` → Read images, note the file_ids with the problem → `contact-sheet --from-manifest ./frames --exclude <bad ids> --out sheet.png`
+- Caveat to keep in mind when judging: `frames pull` gives ONE poster frame per clip, not the whole timeline. Say so if the user's ask needs per-frame scrubbing (that's an open follow-up using ffmpeg on downloaded originals).
 
 ## JSON contracts (stable)
 
@@ -66,7 +72,8 @@ If the user asks for one of the above, explain it's out of scope (see PRD §scop
 - `comments <file_id> --json` → `{ "file_id", "file_name", "duration_seconds", "fps", "comments_count", "comments": [ { "comment_id", "text", "timecode", "timestamp_seconds", "author_name", "created_at", "parent_id", "is_reply" } ] }`
 - `share create ... --json` → `{ "share_id", "name", "url", "visibility", "allow_download", "expires_at", "password_protected", "asset_count", "asset_ids", "created_at", "reviewers_added", "reviewer_status" }`
 - `refs add ... --json` → `{ "file_id", "name", "project_id", "parent_folder_id", "status", "view_url", "mode", "source" }`
-- `contact-sheet --json` → `{ "out", "tile_count", "cols", "tile_size" }`
+- `frames pull ... --json` → `{ "source", "out_dir", "count", "frames": [ { "index", "file_id", "name", "media_type", "local_path", "view_url" } ], "missing_thumbnail" }`
+- `contact-sheet --json` → `{ "out", "tile_count", "cols", "tile_size", "excluded", "tiles": [ { "index", "file_id", "name" } ], "index_file"? }`
 
 ---
 

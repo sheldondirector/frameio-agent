@@ -534,12 +534,12 @@ def cmd_login(*, port: Optional[int] = None, no_browser: bool = False, manual: b
 
         if result.error:
             print(
-                f"Error from Adobe: {result.error} — {result.error_description or ''}",
+                f"Error from Adobe: {result.error} - {result.error_description or ''}",
                 file=sys.stderr,
             )
             return 2
         if result.state != state:
-            print("Error: OAuth state mismatch — possible CSRF. Aborting.", file=sys.stderr)
+            print("Error: OAuth state mismatch - possible CSRF. Aborting.", file=sys.stderr)
             return 2
         if not result.code:
             print("Error: no authorization code received.", file=sys.stderr)
