@@ -119,9 +119,24 @@ If your agent supports MCP, run `frameio-agent mcp` to expose the core read oper
 | `yt-dlp is not installed` | `pip install "frameio-agent[youtube]"` |
 | `Pillow is required` | `pip install "frameio-agent[images]"` |
 
+## Install without cloning
+
+The CLI is published on PyPI as **`frameio-agent-starter`** — install it with pipx for a clean, per-user install, or with uvx for a one-shot run:
+
+```bash
+# pipx (persistent, adds `frameio-agent` to your PATH)
+pipx install frameio-agent-starter
+frameio-agent auth login
+
+# uvx (no install needed — runs from cache)
+uvx frameio-agent-starter --help
+```
+
+Both methods handle dependencies automatically. No `git clone`, no `pip install -e .`, no virtualenv.
+
 ## Roadmap
 
-Open issues track what's next: PyPI/pipx packaging, HTTPS-loopback zero-paste auth, multi-frame extraction via ffmpeg. See [Issues](https://github.com/sheldondirector/frameio-agent/issues).
+Open issues track what's next: HTTPS-loopback zero-paste auth, multi-frame extraction via ffmpeg. See [Issues](https://github.com/sheldondirector/frameio-agent/issues).
 
 ## License
 
